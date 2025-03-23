@@ -1,0 +1,41 @@
+import numpy as np
+from scipy.interpolate import UnivariateSpline
+
+def readaerodyn(filename):
+    """Apenas le um numero de Reynolds caso haja mais de um."""
+    alpha = []
+    cl = []
+    cd = []
+
+    with open(filename, 'r') as f:
+        #pula as primeiras 13 linhas
+        for _ in range(13):
+            next(f)
+        
+        #Le os dados até encontrar "EOT"
+        for line in f:
+            if 'EOT' in line:
+                break
+            parts = line.split()
+            alpha.append(float(parts[0]))
+            cl.append(float(parts[1]))
+            cd.append(float(parts[2]))
+
+    #Converte as listas para arrays do numpy
+    alpha = np.array(alpha) * np.pi / 180 #Converte graus para radianos
+    cl = np.array(cl)
+    cd = np.array(cd)
+
+    #Cria interpolações spline de 1D (ignorando dependencia de Re)
+    afcl = UnivariateSpline(alpha, cl, s=0.1)
+    afcd = UnivariateSpline(alpha, cd, s=0.001)
+
+    def af(alpha):
+        """Retorna cl e cd interpolados para um dado alpha"""
+        return afcl(alpha), afcd(alpha)
+    
+    return af
+
+#af = readaerodyn('data/NACA_0012_mod.dat')
+print('--' * 12)
+print('\nInicializando a simulação...\n')
