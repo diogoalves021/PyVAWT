@@ -46,7 +46,7 @@ def Dxintegrand(x, y, phi):
     v1 = x + math.sin(phi)
     v2 = y - math.cos(phi)
 
-    print(v1, v2)
+    #print(v1, v2)
     #v1 e v2 não podem ser zero porque nunca integramos self. RxII lida com essa situação.
     return (v1 * math.sin(phi) - v2 * math.cos(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
 
@@ -255,6 +255,9 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     #Direção de rotação
     rotation = np.sign(Omega)
 
+    uvec = np.zeros(36)
+    vvec = np.zeros(36)
+
     #Componentes de velocidade e ângulos
     Vn = Vinf * (1.0 + uvec) * np.sin(thetavec) - Vinf * vvec * np.cos(thetavec)
     Vt = (rotation * (Vinf * (1.0 + uvec) * np.cos(thetavec) + Vinf * vvec * np.sin(thetavec)) + abs(Omega) * r)
@@ -318,7 +321,6 @@ def residual(w, A, theta, k, turbines, env):
 
     for i in range(1, nturbines + 1):
         idx = slice((i - 1) * ntheta, i * ntheta)
-
         u = w[idx]
 
         idx_v = slice(ntheta * nturbines + (i - 1) * ntheta, ntheta * nturbines + 1 * ntheta)
@@ -401,10 +403,11 @@ def actuatorcylinder(turbines, env, ntheta):
     #Processar resultados para cada turbina
     for i in range(nturbines):
         idx = slice(i * ntheta, (i + 1) * ntheta)
-
         u = w[idx]
-        v = w[ntheta * nturbines + idx]
-        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, nturbines[i], env)
+
+        idx_v = slice(ntheta * nturbines + i * ntheta, ntheta * nturbines + (i + 1) * ntheta)
+        v = w[idx_v]
+        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
     
     return CT, CP, Rp, Tp, Zp, theta
 
