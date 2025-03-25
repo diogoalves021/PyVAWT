@@ -38,4 +38,4 @@ def readaerodyn(filename):
 
 #af = readaerodyn('data/NACA_0012_mod.dat')
 print('--' * 12)
-print('\nInicializando a simulação...\n')
+print('\nInitializing the simulation...\n')

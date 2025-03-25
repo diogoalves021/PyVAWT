@@ -2,12 +2,10 @@ import numpy as np
 import math
 import os
 import h5py
-import matplotlib
+import matplotlib.pyplot as plt
 from scipy.integrate import quad
 from scipy.optimize import root
 from typing import Callable, Tuple
-import matplotlib.pyplot as plt
-matplotlib.use("TkAgg")  # Define um backend interativo diferente
 
 #Coeficientes de influência
 
@@ -87,7 +85,7 @@ def WxIJ(xvec, yvec, thetavec):
             and xvec[i]**2 + yvec[i]**2 >= 1.0
         ):
             thetak = np.arccos(yvec[i])
-            k = np.searchsorted(thetavec + dtheta / 2, thetak, side="right") #Índice da interseção
+            k = np.searchsorted(thetavec + dtheta / 2, thetak, side='right') #Índice da interseção
             if 0 <= k < ntheta:
                 Wx[i, k] = -1.0
                 Wx[i, ntheta - k - 1] = 1.0
@@ -131,10 +129,10 @@ def precomputeMatrices(ntheta, modulepath):
     #Escrever no arquivo HDF5
     filepath = f'{modulepath}/theta-{ntheta}.h5'
     with h5py.File(filepath, 'w') as file:
-        file.create_dataset("theta", data=theta)
-        file.create_dataset("Dx", data=Dxself)
-        file.create_dataset("Wx", data=Wxself)
-        file.create_dataset("Ay", data=Ayself)
+        file.create_dataset('theta', data=theta)
+        file.create_dataset('Dx', data=Dxself)
+        file.create_dataset('Wx', data=Wxself)
+        file.create_dataset('Ay', data=Ayself)
      
     return filepath
 
@@ -154,7 +152,7 @@ def matrixAssemble(centerX, centerY, radii, ntheta):
 
     #Verificar e carregar o arquivo precomputado
 
-    file = f"theta-{ntheta}.h5"
+    file = f'theta-{ntheta}.h5'
     modulepath = os.getcwd() #utiliza o diretório atual como caminho
     if not os.path.isfile(file):
         filepath = precomputeMatrices(ntheta, modulepath)
@@ -279,6 +277,8 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     #Forças instantâneas
     qdyn = 0.5 * rho * W**2
     Rp = -cn * qdyn * chord
+    #if np.any(Rp < 0):
+    #    Rp[Rp < 0] = 0
     Tp = ct * qdyn * chord / np.cos(delta)
     Zp = -cn * qdyn * chord * np.tan(delta)
 
@@ -304,6 +304,13 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     #print('Valor de P: ', P)
     CP = P / (0.5 * rho * Vinf**3 * Sref)
     #print('Valor de CP: ', CP)
+
+    #print(f"\n Dentro de radialforce():")
+    #print(f"    CT calculado: {CT}")
+    #print(f"    CP calculado: {CP} (deveria ser <= 1!)")
+    #print(f"    Rp (raio de pressão): {Rp[:5]} ...")
+    #print(f"    Tp (torque): {Tp[:5]} ...")
+
 
     return q, ka, CT, CP, Rp, Tp, Zp
 
@@ -379,6 +386,11 @@ def actuatorcylinder(turbines, env, ntheta):
         w = result.x
         if not result.success:
             print(f'Solver não convergiu para a turbina {i + 1}. Mensagem: {result.message}')
+
+        #print(f"\n🔍 Dentro de actuatorcylinder() para turbina {i+1}:")
+        #print(f"   ➤ Theta: {theta[:5]} ...")
+        #print(f"   ➤ Parâmetros da turbina: r={turbines[i].r}, Omega={turbines[i].Omega}, B={turbines[i].B}")
+        #print(f"   ➤ Parâmetros do ambiente: Vinf={env.Vinf}, rho={env.rho}")
 
         #Separar componentes
         u = w[:ntheta]

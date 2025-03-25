@@ -10,6 +10,12 @@ import matplotlib.pyplot as plt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.main import readaerodyn, Turbine, actuatorcylinder, Environment
 
+'''
+Old way of executing a simulation. 
+Kept for reliability purposes. 
+Using the .json file is recomended for selecting parameters.
+'''
+
 atol = 1e-6
 
 flnm = 'NACA_0012_mod'
@@ -37,9 +43,9 @@ mu = 1.7894e-5
 
 #Digite 0 abaixo para avariar Vinf a cada iteração e manter Omega constante.
 #Digite 1 abaixo para variar Omega a cada iteração e manter Vinf constante.
-var_omega_vinf = 1 #0 ou 1 apenas
+var_omega_vinf = 0 #0 ou 1 apenas
 
-num_turbines = 2 #Only 1 or 2 turbines
+num_turbines = 1 #Only 1 or 2 turbines
  
 turbines = [None] * 1 #Cria uma lista de tamanho 1 vazia
 turbines[0] = Turbine(r, chord, twist, delta, B, af, Omega, 0.0, 0.0) #Inicializa a turbina
@@ -145,10 +151,9 @@ elif num_turbines == 2:
     turbines[0] = Turbine(r, chord, twist, delta, B, af, Omega, 0.0, 0.0)
     turbines[1] = Turbine(r, chord, twist, delta, B, af, -Omega, 0.0, 2 * r)
 
-    # Verifique se são instâncias de Turbine e o atributo 'r'
-    for turbine in turbines:
-        print(f'Type of turbine: {type(turbine)}')
-        print(f'Raio da turbina: {turbine.r}')
+    #for turbine in turbines:
+    #    print(f'Type of turbine: {type(turbine)}')
+    #    print(f'Raio da turbina: {turbine.r}')
 
     #Calling actuator cylinder function
     CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(turbines, env, ntheta)
