@@ -8,11 +8,11 @@ def readaerodyn(filename):
     cd = []
 
     with open(filename, 'r') as f:
-        #pula as primeiras 13 linhas
+        #Ignore first 13 lines
         for _ in range(13):
             next(f)
         
-        #Le os dados até encontrar "EOT"
+        #Read data and stops when finding "EOT"
         for line in f:
             if 'EOT' in line:
                 break
@@ -21,12 +21,12 @@ def readaerodyn(filename):
             cl.append(float(parts[1]))
             cd.append(float(parts[2]))
 
-    #Converte as listas para arrays do numpy
-    alpha = np.array(alpha) * np.pi / 180 #Converte graus para radianos
+    #Convert lists to numpy arrays
+    alpha = np.array(alpha) * np.pi / 180 #Converting degrees to radians
     cl = np.array(cl)
     cd = np.array(cd)
 
-    #Cria interpolações spline de 1D (ignorando dependencia de Re)
+    #Create 1D spline interpolation (ignoring Reynolds dependency)
     afcl = UnivariateSpline(alpha, cl, s=0.1)
     afcd = UnivariateSpline(alpha, cd, s=0.001)
 
