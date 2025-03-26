@@ -22,6 +22,8 @@ Here’s an example of how to simulate a vertical-axis wind turbine using a JSON
 
 **Create a JSON file** (e.g., `config.json`) that includes the simulation parameters:
 
+```bash
+
 {
     "turbine": {
         "r": 17.5,
@@ -47,6 +49,8 @@ Here’s an example of how to simulate a vertical-axis wind turbine using a JSON
     }
 }
 
+```
+
 After setting up your environment and configuring the simulation parameters, you can run the code using the following command:
 
 ```bash
@@ -58,3 +62,7 @@ This will start the simulation, and the results will be displayed according to t
 ## Dependecies
 
 The dependencies for this project are listed in the `pyproject.toml` file. To install the required dependencies, you can use [Poetry](https://python-poetry.org/) or [pip](https://pip.pypa.io/en/stable/).
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
