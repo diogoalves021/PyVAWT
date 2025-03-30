@@ -13,3 +13,4 @@ results/
 theta*.h5
 uv.lock
 .python-version
+src/start_sim.py

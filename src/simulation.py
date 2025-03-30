@@ -425,7 +425,17 @@ def actuatorcylinder(turbines, env, ntheta):
     if not result.success:
         print(f'Solver não convergiu para o sistema acoplado. Mensagem: {result.message}')
     
-    #Processar resultados para cada turbina
+    #for i in range(1, nturbines + 1):
+    for i in range(nturbines): 
+        #idx = list(range((i - 1) * ntheta, i * ntheta))
+        idx = list(range(i * ntheta, (i + 1) * ntheta)) 
+
+        u = w[idx]
+        v = w[ntheta * nturbines + np.array(idx)]
+
+        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i - 1], env)
+
+    '''#Processar resultados para cada turbina
     for i in range(nturbines):
         #idx = slice(i * ntheta, (i + 1) * ntheta)
         idx = np.arange(i * ntheta, (i + 1) * ntheta)
@@ -435,7 +445,7 @@ def actuatorcylinder(turbines, env, ntheta):
         idx_v = np.arange(ntheta * nturbines + i * ntheta, ntheta * nturbines + (i + 1) * ntheta)
         v = w[idx_v]
         _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
-    
+    '''
     return CT, CP, Rp, Tp, Zp, theta
 
 

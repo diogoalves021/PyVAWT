@@ -1,12 +1,9 @@
-import sys
-import os
 import json
 import unittest
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
-from src import readaerodyn
-from src import Turbine, actuatorcylinder, Environment
+from src import readaerodyn, actuatorcylinder, Turbine, Environment
 
 atol = 1e-6
 
@@ -38,7 +35,9 @@ def initialize_turbine_and_environment(config):
     mu = environment_params['mu']
 
     #Creating turbine
-    turbines = [Turbine(r, chord, twist, delta, B, af, Omega, centerX, centerY)]
+    #turbines = [Turbine(r, chord, twist, delta, B, af, Omega, centerX, centerY)]
+    turbines = [None] * 1  # Cria uma lista de tamanho 1 vazia (com um elemento `None`)
+    turbines[0] = Turbine(r, chord, twist, delta, B, af, Omega, 0.0, 0.0)  # Inicializa a turbina
 
     #Creating env
     env = Environment(Vinf, rho, mu)
@@ -124,7 +123,7 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
         #Saving results as a .dat file
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
         header = "TSR CP CT Rp Tp Zp"
-        np.savetxt("results/results.dat", data_to_save, header=header, fmt="%.6f", delimiter="\t")
+        np.savetxt("results/1turbine_results.dat", data_to_save, header=header, fmt="%.6f", delimiter="\t")
 
         print('\nGenerating results...')
 

@@ -1,3 +1,4 @@
+'''
 import sys
 import os
 from read_data import readaerodyn
@@ -12,3 +13,18 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+'''
+
+import os
+import sys
+
+# Obter o diretório do arquivo atual (equivalente a splitdir(@__FILE__)[1] em Julia)
+modulepath = os.path.dirname(__file__)
+
+# Adiciona o diretório do módulo ao sys.path para que o Python possa encontrar os módulos
+sys.path.append(modulepath)
+
+# Importando os módulos
+import read_data
+import simulation

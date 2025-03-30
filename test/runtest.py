@@ -8,8 +8,8 @@ matplotlib.use("TkAgg")  # Set a different backend
 import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.read_data import readaerodyn
-from src.main import Turbine, actuatorcylinder, Environment
+from src import readaerodyn
+from src import Turbine, actuatorcylinder, Environment
 
 '''
 Old way of executing a simulation. 
@@ -46,7 +46,7 @@ mu = 1.7894e-5
 #Digite 1 abaixo para variar Omega a cada iteração e manter Vinf constante.
 var_omega_vinf = 0 #0 ou 1 apenas
 
-num_turbines = 2 #Only 1 or 2 turbines
+num_turbines = 1 #Only 1 or 2 turbines
  
 turbines = [None] * 1 #Cria uma lista de tamanho 1 vazia
 turbines[0] = Turbine(r, chord, twist, delta, B, af, Omega, 0.0, 0.0) #Inicializa a turbina
@@ -100,13 +100,13 @@ if num_turbines == 1:
     print('Simulação concluída.')
 
     #Salvando os resultados
-    with h5py.File('results/single_unit_test_data.h5', 'w') as f:
-        f.create_dataset("CPvec_old", data=CPvec)
-        f.create_dataset("CTvec_old", data=CTvec)
-        f.create_dataset("Rpvec_old", data=Rpvec)
-        f.create_dataset("Tpvec_old", data=Tpvec)
-        f.create_dataset("Zpvec_old", data=Zpvec)
-        f.create_dataset("thetavec_old", data=thetavec)
+    #with h5py.File('results/single_unit_test_data.h5', 'w') as f:
+    #    f.create_dataset("CPvec_old", data=CPvec)
+    #    f.create_dataset("CTvec_old", data=CTvec)
+    #    f.create_dataset("Rpvec_old", data=Rpvec)
+    #    f.create_dataset("Tpvec_old", data=Tpvec)
+    #    f.create_dataset("Zpvec_old", data=Zpvec)
+    #    f.create_dataset("thetavec_old", data=thetavec)
 
     #Salvando em um arquivo .dat
     data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
@@ -115,13 +115,18 @@ if num_turbines == 1:
     np.savetxt("results/results.dat", data_to_save, header=header, fmt="%.6f", delimiter="\t")
 
     #Carregando os resultados
-    with h5py.File('results/single_unit_test_data.h5', 'r') as f:
+    with h5py.File('test/single_unit_test_data.h5', 'r') as f:
         CPvec_old = np.array(f["CPvec_old"])
         CTvec_old = np.array(f["CTvec_old"])
         Rpvec_old = np.array(f["Rpvec_old"])
         Tpvec_old = np.array(f["Tpvec_old"])
         Zpvec_old = np.array(f["Zpvec_old"])
         thetavec_old = np.array(f["thetavec_old"])
+
+    print("CP atual:", CP)
+    print("CP esperado:", CPvec_old)
+    print("Diferença absoluta:", np.abs(CP - CPvec_old))
+    print("Tolerância:", atol)
 
     #Teste de comparação
     assert np.allclose(CPvec, CPvec_old, atol=atol)
