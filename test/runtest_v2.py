@@ -5,8 +5,8 @@ import unittest
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
-from read_data import readaerodyn
-from simulation import Turbine, actuatorcylinder, Environment
+from src import readaerodyn
+from src import Turbine, actuatorcylinder, Environment
 
 atol = 1e-6
 
@@ -91,13 +91,35 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
         print('Simulation completed.')
 
         #Salving results as a HDF5 file
-        with h5py.File('results/single_unit_test_data.h5', 'w') as f:
-            f.create_dataset('CPvec_old', data=CPvec)
-            f.create_dataset('CTvec_old', data=CTvec)
-            f.create_dataset('Rpvec_old', data=Rpvec)
-            f.create_dataset('Tpvec_old', data=Tpvec)
-            f.create_dataset('Zpvec_old', data=Zpvec)
-            f.create_dataset('thetavec_old', data=thetavec)
+        #with h5py.File('test/single_unit_test_data.h5', 'w') as f:
+        #    f.create_dataset('CPvec_old', data=CPvec)
+        #    f.create_dataset('CTvec_old', data=CTvec)
+        #    f.create_dataset('Rpvec_old', data=Rpvec)
+        #    f.create_dataset('Tpvec_old', data=Tpvec)
+        #    f.create_dataset('Zpvec_old', data=Zpvec)
+        #    f.create_dataset('thetavec_old', data=thetavec)
+
+        #Carregando os resultados
+        with h5py.File('test/single_unit_test_data.h5', 'r') as f:
+            CPvec_old = np.array(f["CPvec_old"])
+            CTvec_old = np.array(f["CTvec_old"])
+            Rpvec_old = np.array(f["Rpvec_old"])
+            Tpvec_old = np.array(f["Tpvec_old"])
+            Zpvec_old = np.array(f["Zpvec_old"])
+            thetavec_old = np.array(f["thetavec_old"])
+
+        print("CP atual:", CP)
+        print("CP esperado:", CPvec_old)
+        print("Diferença absoluta:", np.abs(CP - CPvec_old))
+        print("Tolerância:", atol)
+
+        #Teste de comparação
+        assert np.allclose(CPvec, CPvec_old, atol=atol)
+        assert np.allclose(CTvec, CTvec_old, atol=atol)
+        assert np.allclose(Rpvec, Rpvec_old, atol=atol)
+        assert np.allclose(Tpvec, Tpvec_old, atol=atol)
+        assert np.allclose(Zpvec, Zpvec_old, atol=atol)
+        assert np.allclose(thetavec, thetavec_old, atol=atol)
 
         #Saving results as a .dat file
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
@@ -133,22 +155,27 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
         print('Simulation completed.')
 
         #Saving results as a HDF5 file
-        with h5py.File('results/dual_init_test_data.h5', 'w') as file:
-            file.create_dataset('CP_old', data=CP)
-            file.create_dataset('CT_old', data=CT)
-            file.create_dataset('Rp_old', data=Rp)
-            file.create_dataset('Tp_old', data=Tp)
-            file.create_dataset('Zp_old', data=Zp)
-            file.create_dataset('theta_old', data=theta)
+        #with h5py.File('test/dual_unit_test_data.h5', 'w') as file:
+        #    file.create_dataset('CP_old', data=CP)
+        #    file.create_dataset('CT_old', data=CT)
+        #    file.create_dataset('Rp_old', data=Rp)
+        #    file.create_dataset('Tp_old', data=Tp)
+        #    file.create_dataset('Zp_old', data=Zp)
+        #    file.create_dataset('theta_old', data=theta)
 
         #Reading the HDF5 file data
-        with h5py.File('results/dual_init_test_data.h5', 'r') as file:
+        with h5py.File('test/dual_unit_test_data.h5', 'r') as file:
             CP_old = file['CP_old'][:]
             CT_old = file['CT_old'][:]
             Rp_old = file['Rp_old'][:]
             Tp_old = file['Tp_old'][:]
             Zp_old = file['Zp_old'][:]
             theta_old = file['theta_old'][:]
+
+        print("CP atual:", CP)
+        print("CP esperado:", CP_old)
+        print("Diferença absoluta:", np.abs(CP - CP_old))
+        print("Tolerância:", atol)
 
         #Testing (making sure the values are approximately equal)
         assert np.allclose(CP, CP_old, atol=atol)
@@ -173,3 +200,9 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
         #Saving results as a .dat file
         dados = np.column_stack((theta, r * Tp[:, 0], r * Tp[:, 1])) 
         np.savetxt('results/two_turbines_results_python.dat', dados, header="theta, torque_1, torque_2", comments='')
+
+config = load_config()
+turbines, env, simulation_params, turbine_params, environment_params, r, ntheta = initialize_turbine_and_environment(config)
+initialize_turbine_and_environment(config)
+num_turbines = simulation_params['num_turbines']
+run_simulation(turbines, env, simulation_params, r, ntheta, environment_params['Vinf'], num_turbines, turbine_params)

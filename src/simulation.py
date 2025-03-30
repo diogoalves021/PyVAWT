@@ -259,12 +259,18 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     #Componentes de velocidade e ângulos
     Vn = Vinf * (1.0 + uvec) * np.sin(thetavec) - Vinf * vvec * np.cos(thetavec)
     Vt = (rotation * (Vinf * (1.0 + uvec) * np.cos(thetavec) + Vinf * vvec * np.sin(thetavec)) + abs(Omega) * r)
+    print(f'Vn: {Vn[:5]}')
+    print(f'Vt: {Vt[:5]}')
     W = np.sqrt(Vn**2 + Vt**2)
+    print(f'W: {W[:5]}')
     phi = np.arctan2(Vn, Vt)
+    print(f'phi: {phi[:5]}')
     alpha = phi - turbine.twist
+    print(f'alpha: {alpha[:5]}')
 
     #Coeficientes aerodinâmicos (cl, cd) a partir do perfil
     cl, cd = turbine.af(alpha)
+    print(f'cl: {cl[:5]}, cd: {cd[:5]}')
 
     #Rotação dos coeficientes de força
     cn = cl * np.cos(phi) + cd * np.sin(phi)
@@ -299,6 +305,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     #Coeficiente de potência
     H = 1.0 #Altura por unidade
     Sref = 2 * r * H
+    #print(f'Valor de r: {r} e valor de Tp: {Tp}')
     Q = r * Tp
     P = abs(Omega) * B / (2 * np.pi) * np.trapz(Q, x=thetavec)
     #print('Valor de P: ', P)
@@ -322,7 +329,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
 def residual(w, A, theta, k, turbines, env):
     #Configutação inicial
     ntheta = len(theta)
-    nturbines = len(w) // (2 * ntheta)
+    nturbines = int(len(w) / (2 * ntheta))
     q = np.zeros(ntheta * nturbines)
     ka = 0.0
 
@@ -369,20 +376,24 @@ def actuatorcylinder(turbines, env, ntheta):
     #Resolver para cada turbina individualmente
     for i in range(nturbines):
         w0 = np.zeros(ntheta * 2)
-        idx = slice(i * ntheta, (i + 1) * ntheta)
+        #idx = slice(i * ntheta, (i + 1) * ntheta)
+        idx = np.arange(i * ntheta, (i + 1) * ntheta)
 
         #Definir o resíduo para o problema de uma única turbina
         def resid_single(x):
             return residual(
                 x,
-                np.block([[Ax[idx, idx]], [Ay[idx, idx]]]),
+                #np.block([[Ax[idx, idx]], [Ay[idx, idx]]]),
+                np.vstack([Ax[idx][:, idx], Ay[idx][:, idx]]),
                 theta,
                 [1.0],
-                turbines[i:i + 1],
+                #turbines[i:i + 1],
+                [turbines[i]],
                 env
             )
         #Resolver sistema não linear
-        result = root(resid_single, w0, tol=tol)
+        #result = root(resid_single, w0, tol=tol)
+        result = root(resid_single, w0, method='lm', tol=tol)
         w = result.x
         if not result.success:
             print(f'Solver não convergiu para a turbina {i + 1}. Mensagem: {result.message}')
@@ -405,19 +416,23 @@ def actuatorcylinder(turbines, env, ntheta):
 
     #Definir resíduo para o sistema acoplado
     def resid_multiple(x):
-        return residual(x, np.block([[Ax], [Ay]]), theta, k, turbines, env)
+        #return residual(x, np.block([[Ax], [Ay]]), theta, k, turbines, env)
+        return residual(x, np.vstack([Ax, Ay]), theta, k, turbines, env)
     
-    result = root(resid_multiple, w0, tol=tol)
+    #result = root(resid_multiple, w0, tol=tol)
+    result = root(resid_multiple, w0, method='lm', tol=tol)
     w = result.x
     if not result.success:
         print(f'Solver não convergiu para o sistema acoplado. Mensagem: {result.message}')
     
     #Processar resultados para cada turbina
     for i in range(nturbines):
-        idx = slice(i * ntheta, (i + 1) * ntheta)
+        #idx = slice(i * ntheta, (i + 1) * ntheta)
+        idx = np.arange(i * ntheta, (i + 1) * ntheta)
         u = w[idx]
 
-        idx_v = slice(ntheta * nturbines + i * ntheta, ntheta * nturbines + (i + 1) * ntheta)
+        #idx_v = slice(ntheta * nturbines + i * ntheta, ntheta * nturbines + (i + 1) * ntheta)
+        idx_v = np.arange(ntheta * nturbines + i * ntheta, ntheta * nturbines + (i + 1) * ntheta)
         v = w[idx_v]
         _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
     

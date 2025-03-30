@@ -1,24 +1,24 @@
 {
     "turbine": {
-        "r": 3.0,
+        "r": 17.5,
         "twist": 0.0,
         "delta": 0.0,
-        "chord": 0.25,
-        "B": 3,
-        "solidity": 0.25,
+        "chord": 1.75,
+        "B": 2,
+        "solidity": 0.1,
         "centerX": 0,
         "centerY": 0,
         "Omega": 0.0,
         "ntheta": 36
     },
     "environment": {
-        "Vinf": 1.0,
+        "Vinf": 2.0,
         "rho": 1.225,
         "mu": 1.7894e-5
     },
     "simulation": {
         "var_omega_vinf": 0,
-        "num_turbines": 1,
+        "num_turbines": 2,
         "aero_profile": "data/NACA_0012_mod.dat"
     }
 }

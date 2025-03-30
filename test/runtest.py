@@ -8,7 +8,8 @@ matplotlib.use("TkAgg")  # Set a different backend
 import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.main import readaerodyn, Turbine, actuatorcylinder, Environment
+from src.read_data import readaerodyn
+from src.main import Turbine, actuatorcylinder, Environment
 
 '''
 Old way of executing a simulation. 
@@ -18,7 +19,7 @@ Using the .json file is recomended for selecting parameters.
 
 atol = 1e-6
 
-flnm = 'NACA_0012_mod'
+flnm = 'NACA_0021'
 
 #Parâmetros e variáveis de entrada
 
@@ -28,7 +29,7 @@ ntheta = 36
 r = 35/2
 twist = 0.0
 delta = 0.0
-af = readaerodyn(f'data/NACA_0012_mod.dat')
+af = readaerodyn(f'data/NACA_0021.dat')
 chord = 1.75 #solidity * r / B
 B = 2
 solidity = 0.1
@@ -45,7 +46,7 @@ mu = 1.7894e-5
 #Digite 1 abaixo para variar Omega a cada iteração e manter Vinf constante.
 var_omega_vinf = 0 #0 ou 1 apenas
 
-num_turbines = 1 #Only 1 or 2 turbines
+num_turbines = 2 #Only 1 or 2 turbines
  
 turbines = [None] * 1 #Cria uma lista de tamanho 1 vazia
 turbines[0] = Turbine(r, chord, twist, delta, B, af, Omega, 0.0, 0.0) #Inicializa a turbina
