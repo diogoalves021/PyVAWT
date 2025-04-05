@@ -1,9 +1,10 @@
 [project]
 name = "pyvawt"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.3.0"
+description = "Simulation of vertical-axis wind turbines using the actuator cylinder method."
 readme = "README.md"
 requires-python = ">=3.13"
+license = {text = "MIT"}
 dependencies = [
     "h5py>=3.13.0",
     "matplotlib>=3.10.1",
