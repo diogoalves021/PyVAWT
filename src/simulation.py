@@ -261,6 +261,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     W = np.sqrt(Vn**2 + Vt**2)
     phi = np.arctan2(Vn, Vt)
     alpha = phi - turbine.twist
+    print(alpha)
 
     #Coeficientes aerodinâmicos (cl, cd) a partir do perfil
     cl, cd = turbine.af(alpha)

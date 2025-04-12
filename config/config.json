@@ -19,6 +19,6 @@
     "simulation": {
         "var_omega_vinf": 0,
         "num_turbines": 1,
-        "aero_profile": "data/qblade/NACA 0021_NACA_0021_Re0.360_M0.00_N9_D1-75.txt"
+        "aero_profile": "data/qblade/NACA 0021_NACA_0021_Re5e6_M0.3_N9_D0_15_-24-20.txt"
     }
 }

@@ -19,8 +19,8 @@ def readaerodyn(filename):
 
     # Seleciona as linhas de dados conforme o formato detectado
     if is_qblade:
-        # Formato QBlade: pula as 12 primeiras linhas
-        data_lines = lines[12:]
+        # Formato QBlade: pula as 11 primeiras linhas
+        data_lines = lines[11:]
     else:
         # Formato .dat: pula as 13 primeiras linhas e lê até encontrar "EOT"
         data_lines = []
