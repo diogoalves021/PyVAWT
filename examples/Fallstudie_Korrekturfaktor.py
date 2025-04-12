@@ -123,7 +123,7 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
         #Saving results as a .dat file
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
         header = "TSR CP CT Rp Tp Zp"
-        np.savetxt("results/1turbine_results.dat", data_to_save, header=header, fmt="%.6f", delimiter="\t")
+        np.savetxt("results/1turbine_results_korrekturfaktor.dat", data_to_save, header=header, fmt="%.6f", delimiter="\t")
 
         print('\nGenerating results...')
 

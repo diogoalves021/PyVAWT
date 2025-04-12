@@ -49,7 +49,7 @@ def initialize_turbine_and_environment(config):
 
 def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbines, turbine_params):
     var_omega_vinf = simulation_params['var_omega_vinf']
-    # Usaremos o nome base do arquivo do perfil para nomear os arquivos de saída
+    # Usando o nome base dos arquivos para nomear os arquivos de saída
     profile_name = os.path.basename(simulation_params['aero_profile']).replace('.txt', '')
     
     # ------------------------------
@@ -128,6 +128,7 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
         plt.plot(tsrvec, CPvec, color='blue', label='$C_p$')
         plt.title(f'Gráfico de $C_p$ x TSR ($\\lambda$) para {profile_name}')
         plt.legend()
+        plt.grid()
         plt.show()
 
     # ------------------------------

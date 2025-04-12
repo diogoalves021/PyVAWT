@@ -280,10 +280,11 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     Tp = ct * qdyn * chord / np.cos(delta)
     Zp = -cn * qdyn * chord * np.tan(delta)
 
+    
     #Fator de correção não linear
     integrand = (W / Vinf)**2 * (cn * np.sin(thetavec) - rotation * ct * np.cos(thetavec) / np.cos(delta))
     CT = sigma / (4 * np.pi) * np.trapz(integrand, x=thetavec)
-
+    
     if CT > 2.0:
         a = 0.5 * (1.0 + np.sqrt(1.0 + CT))
         ka = 1.0 / (a - 1)
@@ -294,6 +295,17 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
         a = 0.5 * (1 - np.sqrt(1.0 - CT))
         ka = 1.0 / (1 - a)
     
+    '''
+    # Novo fator de correção
+    a=0.0892074*CT**3 + 0.0544955*CT**2 + 0.251163*CT - 0.0017077
+
+    if a <= 0.15:
+        ka = 1/(1-a)
+
+    elif a > 0.15:
+        ka = 1/(1-a)*(0.65 + 0.35*math.exp(-4.5*(a-0.15)))
+    '''  
+
     #Coeficiente de potência
     H = 1.0 #Altura por unidade
     Sref = 2 * r * H
