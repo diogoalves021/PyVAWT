@@ -4,7 +4,7 @@ import numpy as np
 import h5py
 import matplotlib.pyplot as plt
 import os
-from src import readaerodyn, actuatorcylinder, Turbine, Environment
+from src import readaerodyn_neuralfoil, actuatorcylinder, Turbine, Environment
 
 atol = 1e-6
 
@@ -24,7 +24,13 @@ def initialize_turbine_and_environment(config):
     r = turbine_params['r']
     twist = turbine_params['twist']
     delta = turbine_params['delta']
-    af = readaerodyn(simulation_params['aero_profile'])
+    af = af = readaerodyn_neuralfoil(
+    airfoil_name=simulation_params.get('airfoil_name', 'naca0021'),  # nome da geometria
+    Reynolds=simulation_params.get('Re', 5e6),
+    Mach=simulation_params.get('Mach', 0.3),
+    model_size=simulation_params.get('model_size', 'xxxlarge'),
+    include_360_deg_effects=simulation_params.get('include_360_deg_effects', False)
+)
     chord = turbine_params['chord']
     B = turbine_params['B']
     solidity = turbine_params['solidity']
@@ -49,9 +55,8 @@ def initialize_turbine_and_environment(config):
 
 def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbines, turbine_params):
     var_omega_vinf = simulation_params['var_omega_vinf']
-    Omega = turbine_params['Omega']
-    # Usaremos o nome base do arquivo do perfil para nomear os arquivos de saída
-    profile_name = os.path.basename(simulation_params['aero_profile']).replace('.txt', '')
+    # Usando o nome base dos arquivos para nomear os arquivos de saída
+    profile_name = simulation_params['airfoil_name']
     
     # ------------------------------
     # Simulação para uma turbina
@@ -79,8 +84,7 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 
         elif var_omega_vinf == 1:
             for i, tsr in enumerate(tsrvec):
-                #turbines[0].Omega = 13.62 * 2 * np.pi / 60.0
-                turbines[0].Omega = Omega
+                turbines[0].Omega = 13.62 * 2 * np.pi / 60.0
                 env.Vinf = turbines[0].Omega * r / tsr
                 CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(turbines, env, ntheta)
                 CPvec[i] = CP[0]
@@ -127,9 +131,10 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 
         # Gerando gráfico dos resultados
         plt.figure(figsize=(10, 5))
-        plt.plot(tsrvec[tsrvec >= 1.7], CPvec[tsrvec >= 1.7], color='blue', label='$C_p$')
+        plt.plot(tsrvec, CPvec, color='blue', label='$C_p$')
         plt.title(f'Gráfico de $C_p$ x TSR ($\\lambda$) para {profile_name}')
         plt.legend()
+        plt.grid()
         plt.show()
 
     # ------------------------------
@@ -195,46 +200,23 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 
 def runtest():
     # Lista dos caminhos dos perfis aerodinâmicos a serem testados
-    perfis = [
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.30_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.30_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.30_N9.txt'
-    ]
-    
-    ''' 
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.30_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.30_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.3_N9.txt'
-    '''
+    airfoils = ['naca0018']
 
     # Garante que a pasta de resultados exista
     os.makedirs("results", exist_ok=True)
     
-    for perfil in perfis:
-        print(f"\nExecutando simulação com o perfil: {perfil}")
-        config = load_config(novo_perfil=perfil)
-        turbines, env, simulation_params, turbine_params, environment_params, r, ntheta = initialize_turbine_and_environment(config)
+    for airfoil_name in airfoils:
+        print(f"\nExecutando simulação com o perfil: {airfoil_name}")
+        
+        config = load_config()
+        config['simulation']['airfoil_name'] = airfoil_name  
+
+        turbines, env, simulation_params, turbine_params, environment_params, r, ntheta = \
+            initialize_turbine_and_environment(config)
+        
         num_turbines = simulation_params['num_turbines']
-        # Cada simulação é executada e os resultados são armazenados com um nome de arquivo único
         run_simulation(turbines, env, simulation_params, r, ntheta, environment_params['Vinf'], num_turbines, turbine_params)
+
 
 if __name__ == "__main__":
     runtest()

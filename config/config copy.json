@@ -19,10 +19,6 @@
     "simulation": {
         "var_omega_vinf": 1, 
         "num_turbines": 1,
-        "aero_profile": "data/experimental/NACA_0018.dat",
-        "airfoil_name": "naca0021",
-        "Re": 5000000,
-        "Mach": 0.3,
-        "include_360_deg_effects": false
+        "aero_profile": "data/experimental/NACA_0018.dat"
     }
 }

@@ -6,6 +6,35 @@ import matplotlib.pyplot as plt
 import os
 from src import readaerodyn, actuatorcylinder, Turbine, Environment
 
+'''
+Parameters:
+{
+    "turbine": {
+        "r": 17.5,
+        "twist": 0.0,
+        "delta": 0.0,
+        "chord": 1.75,
+        "B": 2,
+        "solidity": 0.1,
+        "centerX": 0,
+        "centerY": 0,
+        "Omega": 1.427,
+        "ntheta": 36
+    },
+    "environment": {
+        "Vinf": 6.23,
+        "rho": 1.225,
+        "mu": 1.7894e-5
+    },
+    "simulation": {
+        "var_omega_vinf": 1, 
+        "num_turbines": 1,
+        "aero_profile": "data/experimental/NACA_00.dat"
+    }
+}
+
+'''
+
 atol = 1e-6
 
 def load_config(novo_perfil=None):
@@ -196,34 +225,10 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 def runtest():
     # Lista dos caminhos dos perfis aerodinâmicos a serem testados
     perfis = [
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.30_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.30_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.30_N9.txt'
+        'data/neuralfoil/naca0018_cl_cd_Re=746371_M=0.0183.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=2245403_M=0.0551.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=3738145_M=0.0918.txt'
     ]
-    
-    ''' 
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.30_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.30_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.3_N9.txt'
-    '''
 
     # Garante que a pasta de resultados exista
     os.makedirs("results", exist_ok=True)

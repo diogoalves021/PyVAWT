@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = {text = "MIT"}
 dependencies = [
+    "aerosandbox>=4.2.8",
     "h5py>=3.13.0",
     "matplotlib>=3.10.1",
     "numpy>=2.2.4",

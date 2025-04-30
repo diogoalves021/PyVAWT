@@ -127,7 +127,7 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 
         # Gerando gráfico dos resultados
         plt.figure(figsize=(10, 5))
-        plt.plot(tsrvec[tsrvec >= 1.7], CPvec[tsrvec >= 1.7], color='blue', label='$C_p$')
+        plt.plot(tsrvec[tsrvec >= 0], CPvec[tsrvec >= 0], color='blue', label='$C_p$')
         plt.title(f'Gráfico de $C_p$ x TSR ($\\lambda$) para {profile_name}')
         plt.legend()
         plt.show()
@@ -196,34 +196,19 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 def runtest():
     # Lista dos caminhos dos perfis aerodinâmicos a serem testados
     perfis = [
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re0.500_M0.30_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re1.000_M0.30_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.00_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.15_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.23_N9.txt',
-        'data/qblade/NACA 0018/NACA 0018_NACA_0018_Re5.000_M0.30_N9.txt'
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.0.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.1.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.2.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.3.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.0.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.1.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.2.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.3.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.0.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.1.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.2.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.3.txt'
     ]
-    
-    ''' 
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e5_M0.30_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re1e6_M0.30_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.00_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.15_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.225_N9.txt',
-        'data/qblade/NACA 0021_NACA_0021_Re5e6_M0.3_N9.txt'
-    '''
 
     # Garante que a pasta de resultados exista
     os.makedirs("results", exist_ok=True)
