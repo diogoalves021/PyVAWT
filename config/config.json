@@ -20,7 +20,7 @@
         "var_omega_vinf": 1, 
         "num_turbines": 1,
         "aero_profile": "data/experimental/NACA_0018.dat",
-        "airfoil_name": "naca0021",
+        "airfoil_name": "naca0018",
         "Re": 5000000,
         "Mach": 0.3,
         "include_360_deg_effects": false
