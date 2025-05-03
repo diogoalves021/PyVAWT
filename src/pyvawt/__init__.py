@@ -1,3 +1,3 @@
-from .read_data import readaerodyn
+from .data_reading import readaerodyn
 from .simulation import Turbine, Environment, actuatorcylinder
-from .gen_data import readaerodyn_neuralfoil
+from .data_generation import readaerodyn_neuralfoil

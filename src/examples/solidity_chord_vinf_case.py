@@ -14,6 +14,19 @@ from src.pyvawt import readaerodyn_neuralfoil, actuatorcylinder, Turbine, Enviro
 atol = 1e-6
 
 def load_config(novo_perfil=None):
+    """
+    Loads the simulation configuration from a JSON file.
+
+    Parameters
+    ----------
+    novo_perfil : str, optional
+        Name of a new airfoil profile to override the one in the configuration file.
+
+    Returns
+    -------
+    dict
+        The loaded configuration dictionary, possibly modified with the new airfoil profile.
+    """
     with open('src/pyvawt/config/config.json', 'r') as f:
         config = json.load(f)
     if novo_perfil:
@@ -21,10 +34,55 @@ def load_config(novo_perfil=None):
     return config
 
 def save_config(config, path):
+    """
+    Saves the simulation configuration to a JSON file.
+
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary to save.
+    path : str
+        Destination path for the JSON file.
+    """
     with open(path, 'w') as f:
         json.dump(config, f, indent=4)
 
 def run_simulation_case(params):
+    """
+    Runs a single aerodynamic simulation case based on the provided parameters.
+
+    Parameters
+    ----------
+    params : tuple
+        A tuple containing the parameters:
+        - airfoil : str
+            Name of the airfoil profile.
+        - chord : float
+            Chord length of the blade (in meters).
+        - solidity : float
+            Solidity of the turbine.
+        - vinf : float
+            Freestream wind velocity (in m/s).
+
+    Returns
+    -------
+    dict
+        Dictionary summarizing the result of the simulation. Contains:
+        - 'name' : str
+            Folder name used to store the results.
+        - 'airfoil', 'chord', 'solidity', 'vinf' : input parameters
+        - 'status' : str
+            'OK' if successful, or error message if failed.
+        - 'time_sec' : float
+            Duration of the simulation in seconds.
+
+    Notes
+    -----
+    - The function initializes a turbine and environment, runs simulations across a TSR range,
+      and stores results including a .dat file and a Cp vs TSR plot.
+    - Assumes the use of 1 turbine for now.
+    - Results are saved in a subdirectory of 'src/results/temporary_results'.
+    """
     airfoil, chord, solidity, vinf = params
     B = 2
     r = chord * B / solidity
@@ -93,7 +151,7 @@ def run_simulation_case(params):
                     thetavec[i, :] = theta
             
             else:
-                print(f'[ERROR] var_omega_vinf inválido: {var_omega_vinf}')
+                print(f'[ERROR] var_omega_vinf invalid: {var_omega_vinf}')
                 return
             
             # Salvar resutados como .dat dentro da pasta
@@ -139,6 +197,36 @@ def run_simulation_case(params):
         }
 
 def initialize_turbine_and_environment(config):
+    """
+    Initializes the turbine and environment objects based on the configuration file.
+
+    Parameters
+    ----------
+    config : dict
+        Dictionary containing simulation, turbine, and environment parameters.
+
+    Returns
+    -------
+    turbines : list of Turbine
+        List containing the initialized Turbine object(s).
+    env : Environment
+        The Environment object initialized with freestream conditions.
+    simulation_params : dict
+        Dictionary with general simulation parameters.
+    turbine_params : dict
+        Dictionary with turbine-specific parameters.
+    environment_params : dict
+        Dictionary with environmental parameters.
+    r : float
+        Rotor radius (in meters).
+    ntheta : int
+        Number of azimuthal discretization points.
+
+    Notes
+    -----
+    The function also reads airfoil data using the `readaerodyn_neuralfoil` function
+    and uses it to initialize the turbine's aerodynamic properties.
+    """
     turbine_params = config['turbine']
     environment_params = config['environment']
     simulation_params = config['simulation']
@@ -177,6 +265,22 @@ def initialize_turbine_and_environment(config):
     return turbines, env, simulation_params, turbine_params, environment_params, r, ntheta
 
 def runtest():
+    """
+    Runs a batch of aerodynamic simulations for different parameter combinations.
+
+    The function defines a small set of test cases using airfoil, chord, solidity,
+    and freestream velocity values, and runs them in parallel using multiple CPU cores.
+
+    Results are saved to disk:
+    - Individual simulation results are stored in subfolders under 'src/results/temporary_results'.
+    - A log file named 'log_simulacoes.csv' is saved summarizing all simulations.
+
+    Notes
+    -----
+    - Uses ProcessPoolExecutor for parallel execution of simulations.
+    - The list of parameters can be modified directly within the function.
+    - This is the main function to be run as a script.
+    """
     # Lista dos parâmetros a serem testados
     airfoils = ['naca0018']
     #chords = [0.875, 1.3125, 1.75, 2.1875, 2.625] #simulação para corda de 0.875 e suas combinações feitas.
