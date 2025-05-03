@@ -4,36 +4,7 @@ import numpy as np
 import h5py
 import matplotlib.pyplot as plt
 import os
-from src import readaerodyn, actuatorcylinder, Turbine, Environment
-
-'''
-Parameters:
-{
-    "turbine": {
-        "r": 17.5,
-        "twist": 0.0,
-        "delta": 0.0,
-        "chord": 1.75,
-        "B": 2,
-        "solidity": 0.1,
-        "centerX": 0,
-        "centerY": 0,
-        "Omega": 1.427,
-        "ntheta": 36
-    },
-    "environment": {
-        "Vinf": 6.23,
-        "rho": 1.225,
-        "mu": 1.7894e-5
-    },
-    "simulation": {
-        "var_omega_vinf": 1, 
-        "num_turbines": 1,
-        "aero_profile": "data/experimental/NACA_00.dat"
-    }
-}
-
-'''
+from src.pyvawt import readaerodyn, actuatorcylinder, Turbine, Environment
 
 atol = 1e-6
 
@@ -156,7 +127,7 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 
         # Gerando gráfico dos resultados
         plt.figure(figsize=(10, 5))
-        plt.plot(tsrvec[tsrvec >= 1.7], CPvec[tsrvec >= 1.7], color='blue', label='$C_p$')
+        plt.plot(tsrvec[tsrvec >= 0], CPvec[tsrvec >= 0], color='blue', label='$C_p$')
         plt.title(f'Gráfico de $C_p$ x TSR ($\\lambda$) para {profile_name}')
         plt.legend()
         plt.show()
@@ -225,9 +196,18 @@ def run_simulation(turbines, env, simulation_params, r, ntheta, Vinf, num_turbin
 def runtest():
     # Lista dos caminhos dos perfis aerodinâmicos a serem testados
     perfis = [
-        'data/neuralfoil/naca0018_cl_cd_Re=746371_M=0.0183.txt',
-        'data/neuralfoil/naca0018_cl_cd_Re=2245403_M=0.0551.txt',
-        'data/neuralfoil/naca0018_cl_cd_Re=3738145_M=0.0918.txt'
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.0.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.1.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.2.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=500000.0_M=0.3.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.0.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.1.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.2.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=1000000.0_M=0.3.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.0.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.1.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.2.txt',
+        'data/neuralfoil/naca0018_cl_cd_Re=5000000.0_M=0.3.txt'
     ]
 
     # Garante que a pasta de resultados exista

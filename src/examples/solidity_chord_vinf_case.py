@@ -14,7 +14,7 @@ from src.pyvawt import readaerodyn_neuralfoil, actuatorcylinder, Turbine, Enviro
 atol = 1e-6
 
 def load_config(novo_perfil=None):
-    with open('config/config.json', 'r') as f:
+    with open('src/pyvawt/config/config.json', 'r') as f:
         config = json.load(f)
     if novo_perfil:
         config['simulation']['aero_profile'] = novo_perfil
@@ -32,7 +32,7 @@ def run_simulation_case(params):
 
     # Nome da pasta baseado nos parâmetros
     folder_name = f'{airfoil}_ch{chord}_sol{solidity}_vinf{vinf}'.replace('.', 'p')
-    result_dir = os.path.join('results', folder_name)
+    result_dir = os.path.join('src/results/temporary_results', folder_name)
     os.makedirs(result_dir, exist_ok=True)
 
     try:
@@ -180,9 +180,13 @@ def runtest():
     # Lista dos parâmetros a serem testados
     airfoils = ['naca0018']
     #chords = [0.875, 1.3125, 1.75, 2.1875, 2.625] #simulação para corda de 0.875 e suas combinações feitas.
-    chords = [1.3125, 1.75, 2.1875, 2.625]
-    solidities = [0.1, 0.3, 0.5, 0.7]
-    vinfs = [3.115, 4.6725, 6.23, 7.7875, 9.345]
+    #chords = [1.3125, 1.75, 2.1875, 2.625]
+    #solidities = [0.1, 0.3, 0.5, 0.7]
+    #vinfs = [3.115, 4.6725, 6.23, 7.7875, 9.345]
+    chords = [1.3125]
+    solidities = [0.1]
+    vinfs = [9.345]
+
 
     combinations = list(product(airfoils, chords, solidities, vinfs))
     print(f'Initializing {len(combinations)} paralel simulations... \n')
@@ -198,7 +202,7 @@ def runtest():
             print(result['name'], '-', result['status'])
 
     # Salvar log em csv
-    log_path = os.path.join('results', 'log_simulacoes.csv')
+    log_path = os.path.join('src/results/temporary_results', 'log_simulacoes.csv')
     with open(log_path, mode='w', newline='') as csvfile:
         fieldnames = ['name', 'airfoil', 'chord', 'solidity', 'vinf', 'status', 'time_sec']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -208,7 +212,7 @@ def runtest():
     print(f'\n Log salvo em: {log_path}')
 
     # Garante que a pasta de resultados exista
-    os.makedirs("results", exist_ok=True)
+    os.makedirs("src/results/temporary_results", exist_ok=True)
 
 if __name__ == "__main__":
     runtest()

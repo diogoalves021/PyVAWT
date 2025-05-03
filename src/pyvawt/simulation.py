@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 matplotlib.use("TkAgg")  # Define a different interactive backend
 
 # Coefficients of influence
-
 def panelIntegration(xvec, yvec, thetavec, ifunc):
     """
     Perform panel integration to compute influence coefficients.

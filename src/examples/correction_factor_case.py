@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
-from src import readaerodyn, actuatorcylinder, Turbine, Environment
+from src.pyvawt import readaerodyn, actuatorcylinder, Turbine, Environment
 
 atol = 1e-6
 
