@@ -2,7 +2,33 @@ import numpy as np
 from scipy.interpolate import UnivariateSpline
 
 def readaerodyn(filename):
-    """Apenas le um numero de Reynolds caso haja mais de um."""
+    """
+    Reads an aerodynamic data file and returns a function that interpolates Cl and Cd 
+    as a function of angle of attack (alpha).
+
+    This function automatically detects the file format (QBlade or .dat) and extracts 
+    angle of attack (in degrees), lift coefficient (Cl), and drag coefficient (Cd) data.
+    Then, it creates spline interpolators for Cl and Cd.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the file containing aerodynamic data.
+
+    Returns
+    -------
+    af : function
+        A function that takes an angle of attack in radians (float or array) and returns 
+        the interpolated Cl and Cd values.
+        Example: `cl, cd = af(alpha)`
+
+    Notes
+    -----
+    - The angle of attack in the file is assumed to be in degrees and is internally 
+      converted to radians.
+    - Only one Reynolds number is considered, even if multiple are present.
+    - Smoothed splines are used to reduce noise (s=0.1 for Cl, s=0.001 for Cd).
+    """
     alpha = []
     cl = []
     cd = []
@@ -10,43 +36,40 @@ def readaerodyn(filename):
     with open(filename, 'r') as f:
         lines = f.readlines()
 
-    # Detecta automaticamente o tipo de arquivo:
-    # Se nas primeiras 15 linhas houver a palavra "alpha" (em qualquer caixa) e não houver "EOT", é provável que seja o formato QBlade.
+    # Automatically detect file format:
     if any('alpha' in line.lower() for line in lines[:15]) and not any('EOT' in line for line in lines):
         is_qblade = True
     else:
         is_qblade = False
 
-    # Seleciona as linhas de dados conforme o formato detectado
+    # Select data lines based on format
     if is_qblade:
-        # Formato QBlade: pula as 11 primeiras linhas
         data_lines = lines[11:]
     else:
-        # Formato .dat: pula as 13 primeiras linhas e lê até encontrar "EOT"
         data_lines = []
         for line in lines[13:]:
             if 'EOT' in line:
                 break
             data_lines.append(line)
 
-    # Processa as linhas de dados
+    # Process data lines
     for line in data_lines:
         parts = line.split()
         if len(parts) < 3:
-            continue  # Ignora linhas com menos de 3 valores
+            continue 
         try:
             alpha.append(float(parts[0]))
             cl.append(float(parts[1]))
             cd.append(float(parts[2]))
         except ValueError:
-            continue  # Ignora linhas que não podem ser convertidas para float
+            continue  
     
-    # Converte listas para arrays do numpy e converte alpha de graus para radianos
+    # Convert lists to NumPy arrays and convert degrees to radians
     alpha = np.array(alpha) * np.pi / 180
     cl = np.array(cl)
     cd = np.array(cd)
     
-    # Cria interpoladores spline para Cl e Cd
+    # Create 1D spline interpolators
     afcl = UnivariateSpline(alpha, cl, s=0.1)
     afcd = UnivariateSpline(alpha, cd, s=0.001)
 
@@ -75,11 +98,26 @@ def readaerodyn(filename):
     afcd = UnivariateSpline(alpha, cd, s=0.001)
     '''
     def af(alpha):
-        """Retorna cl e cd interpolados para um dado alpha"""
+        """
+        Returns interpolated lift and drag coefficients for a given angle of attack.
+
+        Parameters
+        ----------
+        alpha : float or array_like
+            Angle of attack in radians.
+
+        Returns
+        -------
+        cl : float or ndarray
+            Interpolated lift coefficient.
+
+        cd : float or ndarray
+            Interpolated drag coefficient.
+        """
         return afcl(alpha), afcd(alpha)
         
     return af
 
 #af = readaerodyn('data/NACA_0012_mod.dat')
 print('--' * 12)
-print('\nInicializando a simulação...\n')
+print('\nStarting simulation...\n')

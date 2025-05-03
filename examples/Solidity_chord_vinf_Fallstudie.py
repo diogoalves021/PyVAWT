@@ -9,7 +9,7 @@ import csv
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
-from src import readaerodyn_neuralfoil, actuatorcylinder, Turbine, Environment
+from src.pyvawt import readaerodyn_neuralfoil, actuatorcylinder, Turbine, Environment
 
 atol = 1e-6
 
@@ -26,6 +26,8 @@ def save_config(config, path):
 
 def run_simulation_case(params):
     airfoil, chord, solidity, vinf = params
+    B = 2
+    r = chord * B / solidity
     start_time = time.time()
 
     # Nome da pasta baseado nos parâmetros
@@ -42,11 +44,12 @@ def run_simulation_case(params):
         config['turbine']['chord'] = chord
         config['turbine']['solidity'] = solidity
         config['environment']['Vinf'] = vinf
+        config['turbine']['r'] = r
 
         save_config(config, os.path.join(result_dir, 'config_used.json'))
 
         # Inicializa simulação
-        turbines, env, sim_params, turb_params, env_params, r, ntheta = initialize_turbine_and_environment(config)
+        turbines, env, sim_params, turb_params, env_params, _, ntheta = initialize_turbine_and_environment(config)
 
         num_turbines = sim_params['num_turbines']
         var_omega_vinf = sim_params['var_omega_vinf']
@@ -108,7 +111,7 @@ def run_simulation_case(params):
             plt.grid(True)
             plt.legend()
             plt.tight_layout()
-            plot_filename = os.path.join(result_dir, f'cp_curve_{profile_name}.png')
+            plot_filename = os.path.join(result_dir, f'cp_curve_{profile_name}.eps')
             plt.savefig(plot_filename)
             plt.close()
 
@@ -174,11 +177,12 @@ def initialize_turbine_and_environment(config):
     return turbines, env, simulation_params, turbine_params, environment_params, r, ntheta
 
 def runtest():
-    # Lista dos caminhos dos perfis aerodinâmicos a serem testados
+    # Lista dos parâmetros a serem testados
     airfoils = ['naca0018']
-    chords = [1.75]
-    solidities = [0.1, 0.3]
-    vinfs = [6.23]
+    #chords = [0.875, 1.3125, 1.75, 2.1875, 2.625] #simulação para corda de 0.875 e suas combinações feitas.
+    chords = [1.3125, 1.75, 2.1875, 2.625]
+    solidities = [0.1, 0.3, 0.5, 0.7]
+    vinfs = [3.115, 4.6725, 6.23, 7.7875, 9.345]
 
     combinations = list(product(airfoils, chords, solidities, vinfs))
     print(f'Initializing {len(combinations)} paralel simulations... \n')

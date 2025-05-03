@@ -7,28 +7,49 @@ from scipy.integrate import quad
 from scipy.optimize import root
 from typing import Callable, Tuple
 import matplotlib.pyplot as plt
-matplotlib.use("TkAgg")  # Define um backend interativo diferente
+matplotlib.use("TkAgg")  # Define a different interactive backend
 
-#Coeficientes de influência
+# Coefficients of influence
 
 def panelIntegration(xvec, yvec, thetavec, ifunc):
     """
-    Executar integração dos paineis para influencia de coeficientes.
-    Aplica para ambos Ay e Dx dependendo da função passada.
+    Perform panel integration to compute influence coefficients.
+
+    This function applies for both Ay and Dx depending on the function passed.
+    
+    Parameters
+    ----------
+    xvec : ndarray
+        Array of x-coordinates of the panels.
+        
+    yvec : ndarray
+        Array of y-coordinates of the panels.
+        
+    thetavec : ndarray
+        Array of angles (in radians) at which the integration is performed.
+        
+    ifunc : Callable
+        The integrand function to be used for integration (either for Ay or Dx).
+        
+    Returns
+    -------
+    A : ndarray
+        The result of the integration, with shape (nx, ntheta), where nx is the
+        number of panels and ntheta is the number of integration points.
     """
     #Inicializar
     nx = len(xvec)
     ntheta = len(thetavec)
-    dtheta = thetavec[1] - thetavec[0] #Assume angulos igualmente espaçados
+    dtheta = thetavec[1] - thetavec[0] # Assumes equally spaced angles
     A = np.zeros((nx, ntheta))
 
     for i in range(nx):
-        #Redefine a função para uso na integração
+        # Redefine the function for use in integration
         def integrand(phi):
             return ifunc(xvec[i], yvec[i], phi)
         
         for j in range(ntheta):
-            #Executar integração adaptativa
+            # Perform adaptive integration
             result, error = quad(
                 integrand,
                 thetavec[j] -dtheta / 2,
@@ -41,43 +62,128 @@ def panelIntegration(xvec, yvec, thetavec, ifunc):
 
 def Dxintegrand(x, y, phi):
     """
-    Integrando usado para computar Dx
+    Integrand function for computing Dx.
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate of the point.
+        
+    y : float
+        y-coordinate of the point.
+        
+    phi : float
+        Angle of integration (in radians).
+        
+    Returns
+    -------
+    float
+        The value of the integrand at the given point and angle.
     """
     v1 = x + math.sin(phi)
     v2 = y - math.cos(phi)
 
     print(v1, v2)
-    #v1 e v2 não podem ser zero porque nunca integramos self. RxII lida com essa situação.
+    # v1 and v2 must not be zero because we never integrate self. RxII handles this situation.
     return (v1 * math.sin(phi) - v2 * math.cos(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
 
 def Ayintegrand(x, y, phi):
     """
-    Integrando usado para computar Ay
+    Integrand function for computing Ay.
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate of the point.
+        
+    y : float
+        y-coordinate of the point.
+        
+    phi : float
+        Angle of integration (in radians).
+        
+    Returns
+    -------
+    float
+        The value of the integrand at the given point and angle.
     """
     v1 = x + math.sin(phi)
     v2 = y - math.cos(phi)
     if abs(v1) < 1e-12 and abs(v2) < 1e-12:
-        #Ocorre quando integramos self; função simétrica função simétrica em torno da singularidade deve integrar-se a zero
+        # Occurs when integrating self; the function is symmetric around the singularity and should integrate to zero
         return 0.0
     return (v1 * math.cos(phi) + v2 * math.sin(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
 
 def AyIJ(xvec, yvec, thetavec):
     """
-    Computar AyIJ integrando com a função AyIntegrand
+    Compute AyIJ by integrating with the Ayintegrand function.
+
+    Parameters
+    ----------
+    xvec : ndarray
+        Array of x-coordinates of the panels.
+        
+    yvec : ndarray
+        Array of y-coordinates of the panels.
+        
+    thetavec : ndarray
+        Array of angles (in radians) at which the integration is performed.
+        
+    Returns
+    -------
+    Ay : ndarray
+        The result of the Ay integration for each panel.
     """
     return panelIntegration(xvec, yvec, thetavec, Ayintegrand)
 
 def DxIJ(xvec, yvec, thetavec):
     """
-    Computar DxIJ integrando com a função Dxintegrand
+    Compute DxIJ by integrating with the Dxintegrand function.
+
+    Parameters
+    ----------
+    xvec : ndarray
+        Array of x-coordinates of the panels.
+        
+    yvec : ndarray
+        Array of y-coordinates of the panels.
+        
+    thetavec : ndarray
+        Array of angles (in radians) at which the integration is performed.
+        
+    Returns
+    -------
+    Dx : ndarray
+        The result of the Dx integration for each panel.
     """
     return panelIntegration(xvec, yvec, thetavec, Dxintegrand)
 
 def WxIJ(xvec, yvec, thetavec):
-    #Inicializa
+    """
+    Compute WxIJ by processing the x and y coordinates to determine influence of panels.
+
+    This function initializes a Wx matrix based on the given x and y coordinates 
+    and the angles at which the integration occurs.
+
+    Parameters
+    ----------
+    xvec : ndarray
+        Array of x-coordinates of the panels.
+        
+    yvec : ndarray
+        Array of y-coordinates of the panels.
+        
+    thetavec : ndarray
+        Array of angles (in radians) at which the integration is performed.
+        
+    Returns
+    -------
+    Wx : ndarray
+        The Wx matrix resulting from the panel influence calculations.
+    """
     nx = len(xvec)
     ntheta = len(thetavec)
-    dtheta = thetavec[1] - thetavec[0] #Supõe valores igualmente espaçados
+    dtheta = thetavec[1] - thetavec[0] # Assumes equally spaced values
     Wx = np.zeros((nx, ntheta))
 
     for i in range(nx):
@@ -87,7 +193,7 @@ def WxIJ(xvec, yvec, thetavec):
             and xvec[i]**2 + yvec[i]**2 >= 1.0
         ):
             thetak = np.arccos(yvec[i])
-            k = np.searchsorted(thetavec + dtheta / 2, thetak, side="right") #Índice da interseção
+            k = np.searchsorted(thetavec + dtheta / 2, thetak, side="right")
             if 0 <= k < ntheta:
                 Wx[i, k] = -1.0
                 Wx[i, ntheta - k - 1] = 1.0
@@ -95,9 +201,24 @@ def WxIJ(xvec, yvec, thetavec):
     return Wx
 
 def DxII(thetavec):
-    #Inicializa
+    """
+    Compute DxII based on the given angles.
+
+    This function initializes a matrix Rx for influence calculations based on 
+    the angular distribution in `thetavec`.
+
+    Parameters
+    ----------
+    thetavec : ndarray
+        Array of angles (in radians) at which the integration is performed.
+        
+    Returns
+    -------
+    Rx : ndarray
+        The DxII matrix resulting from the calculations based on the angles.
+    """
     ntheta = len(thetavec)
-    dtheta = thetavec[1] - thetavec[0] #Supõe valores igualmente espaçados
+    dtheta = thetavec[1] - thetavec[0] # Assumes equally spaced values
     Rx = (dtheta / (4 * np.pi)) * np.ones((ntheta, ntheta))
 
     for i in range(ntheta):
@@ -109,7 +230,25 @@ def DxII(thetavec):
     return Rx
 
 def WxII(thetavec):
-    #Inicializar
+    """
+    Generate the Wx matrix for a given set of angular divisions.
+
+    Parameters
+    ----------
+    thetavec : array_like
+        Array of angular values (theta) used to construct the Wx matrix.
+
+    Returns
+    -------
+    Wx : ndarray
+        A square matrix of size (ntheta, ntheta) representing the influence 
+        of Wx between different turbines.
+
+    Notes
+    -----
+    The function generates the Wx matrix for a set of angles, where half of the 
+    matrix is filled with `-1` values and the other half with `1` values.
+    """
     ntheta = len(thetavec)
     Wx = np.zeros((ntheta, ntheta))
 
@@ -119,16 +258,34 @@ def WxII(thetavec):
     return Wx
 
 def precomputeMatrices(ntheta, modulepath):
-    #Configurar discretização
+    """
+    Precompute matrices for self-influence and save them in an HDF5 file.
+
+    Parameters
+    ----------
+    ntheta : int
+        Number of angular divisions (theta).
+    modulepath : str
+        Path to the directory where the HDF5 file will be saved.
+
+    Returns
+    -------
+    filepath : str
+        Path to the saved HDF5 file containing the precomputed matrices.
+
+    Notes
+    -----
+    The function computes the self-influence matrices for Dx, Wx, and Ay, 
+    then stores them in an HDF5 file for future use.
+    """
     dtheta = 2 * np.pi / ntheta
     theta = np.arange(dtheta / 2, 2 * np.pi, dtheta)
 
-    #Pré-computar matrizes de auto-influência
+    # Precompute matrices
     Dxself = DxII(theta)
     Wxself = WxII(theta)
     Ayself = AyIJ(-np.sin(theta), np.cos(theta), theta)
 
-    #Escrever no arquivo HDF5
     filepath = f'{modulepath}/theta-{ntheta}.h5'
     with h5py.File(filepath, 'w') as file:
         file.create_dataset("theta", data=theta)
@@ -141,60 +298,74 @@ def precomputeMatrices(ntheta, modulepath):
 
 def matrixAssemble(centerX, centerY, radii, ntheta):
     """
-    Monta as matrizes globais para as turbinas VAWT.
+    Assemble the global matrices for VAWT turbines based on their center 
+    coordinates, radii, and angular divisions.
 
-    Parâmetros:
-        centerX, centerY: arrays com as coordenadas x e y dos centros das turbinas.
-        radii: Array om os raios das turbinas.
-        ntheta: número de divisões angulares.
-    
-    Retorna:
-        Ax, Ay, theta: matrizes globais Ax e Ay e o vetor theta.
+    Parameters
+    ----------
+    centerX : array_like
+        Array of x-coordinates of the turbine centers.
+    centerY : array_like
+        Array of y-coordinates of the turbine centers.
+    radii : array_like
+        Array of turbine radii.
+    ntheta : int
+        Number of angular divisions (theta).
+
+    Returns
+    -------
+    Ax : ndarray
+        Assembled global matrix Ax.
+    Ay : ndarray
+        Assembled global matrix Ay.
+    theta : ndarray
+        Array of angular values (theta).
+
+    Notes
+    -----
+    This function constructs the global matrices Ax, Ay, and theta for 
+    a set of turbines using precomputed self-influence matrices, 
+    or recalculating them for pairs of turbines with different radii.
     """
-
-    #Verificar e carregar o arquivo precomputado
-
     file = f"theta-{ntheta}.h5"
-    modulepath = os.getcwd() #utiliza o diretório atual como caminho
+    modulepath = os.getcwd() # uses the current directory as the path
     if not os.path.isfile(file):
         filepath = precomputeMatrices(ntheta, modulepath)
     else:
         filepath = os.path.join(modulepath, file)
 
-    #ler dados do arquivo HDF5
-
+    # Load precomputed matrices from the HDF5 file
     with h5py.File(filepath, 'r') as f:
         theta = f['theta'][:]
         Dxself = f['Dx'][:]
         Wxself = f['Wx'][:]
         Ayself = f['Ay'][:]
 
-    #Inicializar as matrizes globais
-
+    # Initialize global matrices
     nturbines = len(radii)
     Dx = np.zeros((nturbines * ntheta, nturbines * ntheta))
     Wx = np.zeros((nturbines * ntheta, nturbines * ntheta))
     Ay = np.zeros((nturbines * ntheta, nturbines * ntheta))
 
-    #Iterar sobre todas as turbinas
+    # Iterate over all turbines
     for I in range(nturbines):
         for J in range(nturbines):
-            #Coordenadas normalizadas em relação ao centro da turbina J
+            # Normalize coordinates relative to turbine J's center
             x = (centerX[I] - radii[I] * np.sin(theta) - centerX[J]) / radii[J]
             y = (centerY[I] + radii[I] * np.cos(theta) - centerY[J]) / radii[J]
 
-            #Auto-influência pré-computada
+            # Precomputed self-influence for the same turbine
             if I == J:
                 Dxsub = Dxself
                 Wxsub = Wxself
                 Aysub = Ayself
 
-            #Pares com o mesmo raio ja mapeados
+            # For turbines with the same radius already mapped
             elif J < I and radii[I] == radii[J]:
                 Dxsub = Dx[J * ntheta:(J + 1) * ntheta, I * ntheta:(I + 1) * ntheta]
                 Aysub = Ay[J * ntheta:(J + 1) * ntheta, I * ntheta:(I + 1) * ntheta]
 
-                #Recalcular o termo de esteira
+                # Recalculate the wake term
                 Wxsub = WxIJ(x, y, theta)
 
             else:
@@ -202,12 +373,12 @@ def matrixAssemble(centerX, centerY, radii, ntheta):
                 Wxsub = WxIJ(x, y, theta)
                 Aysub = AyIJ(x, y, theta)
 
-            #Montar as submatrizes nas matrizes globais
+            # Assemble the submatrices into the global matrices
             Dx[I * ntheta:(I + 1) * ntheta, J * ntheta:(J + 1) * ntheta] = Dxsub
             Wx[I * ntheta:(I + 1) * ntheta, J * ntheta:(J + 1) * ntheta] = Wxsub
             Ay[I * ntheta:(I + 1) * ntheta, J * ntheta:(J + 1) * ntheta] = Aysub
 
-    #calcular Ax
+    # Calculate Ax matrix
     Ax = Dx + Wx
 
     return Ax, Ay, theta
