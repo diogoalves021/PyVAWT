@@ -13,7 +13,7 @@ from src.pyvawt import readaerodyn_neuralfoil, actuatorcylinder, Turbine, Enviro
 
 atol = 1e-6
 
-def load_config(novo_perfil=None):
+def load_config(path='src/pyvawt/config/config.json'):
     """
     Loads the simulation configuration from a JSON file.
 
@@ -27,10 +27,10 @@ def load_config(novo_perfil=None):
     dict
         The loaded configuration dictionary, possibly modified with the new airfoil profile.
     """
-    with open('src/pyvawt/config/config.json', 'r') as f:
+    with open(path, 'r') as f:
         config = json.load(f)
-    if novo_perfil:
-        config['simulation']['aero_profile'] = novo_perfil
+    #if novo_perfil:
+    #    config['simulation']['aero_profile'] = novo_perfil
     return config
 
 def save_config(config, path):
@@ -282,14 +282,23 @@ def runtest():
     - This is the main function to be run as a script.
     """
     # Lista dos parâmetros a serem testados
-    airfoils = ['naca0018']
+    #airfoils = ['naca0018']
     #chords = [0.875, 1.3125, 1.75, 2.1875, 2.625] #simulação para corda de 0.875 e suas combinações feitas.
     #chords = [1.3125, 1.75, 2.1875, 2.625]
     #solidities = [0.1, 0.3, 0.5, 0.7]
     #vinfs = [3.115, 4.6725, 6.23, 7.7875, 9.345]
-    chords = [1.3125]
-    solidities = [0.1]
-    vinfs = [9.345]
+    #chords = [1.3125]
+    #solidities = [0.1]
+    #vinfs = [9.345]
+
+    # Load base config
+    config = load_config()
+
+    # Extracts sweep lists directly from JSON
+    airfoils = config['simulation']['airfoil']
+    chords = config['turbine']['chord']
+    solidities = config['turbine']['solidity']
+    vinfs = config['environment']['Vinf']
 
 
     combinations = list(product(airfoils, chords, solidities, vinfs))

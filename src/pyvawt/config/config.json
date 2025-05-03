@@ -3,16 +3,16 @@
         "r": 17.5,
         "twist": 0.0,
         "delta": 0.0,
-        "chord": 1.75,
+        "chord": [0.875],
         "B": 2,
-        "solidity": 0.1,
+        "solidity": [0.1],
         "centerX": 0,
         "centerY": 0,
         "Omega": 1.427,
         "ntheta": 36
     },
     "environment": {
-        "Vinf": 6.23,
+        "Vinf": [3.115, 9.345],
         "rho": 1.225,
         "mu": 1.7894e-5
     },
@@ -20,7 +20,7 @@
         "var_omega_vinf": 1, 
         "num_turbines": 1,
         "aero_profile": "data/experimental/NACA_0018.dat",
-        "airfoil_name": "naca0018",
+        "airfoil": ["naca0018"],
         "Re": 5000000,
         "Mach": 0.3,
         "include_360_deg_effects": false
