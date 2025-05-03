@@ -65,21 +65,25 @@ Create a configuration file `config.json` with the simulation parameters:
         "solidity": 0.1,
         "centerX": 0,
         "centerY": 0,
-        "Omega": 0.0,
+        "Omega": 1.427,
         "ntheta": 36
     },
     "environment": {
-        "Vinf": 1.0,
+        "Vinf": 6.23,
         "rho": 1.225,
         "mu": 1.7894e-5
     },
     "simulation": {
-        "var_omega_vinf": 0,
-        "num_turbines": 2,
-        "aero_profile": "data/NACA_0012_mod.dat"
+        "var_omega_vinf": 1, 
+        "num_turbines": 1,
+        "aero_profile": "data/experimental/NACA_0018.dat",
+        "airfoil_name": "naca0018",
+        "Re": 5000000,
+        "Mach": 0.3,
+        "include_360_deg_effects": false
     }
 }
-
+```
 
 After setting up your environment and configuring the simulation parameters, you can run the code using the following command:
 
