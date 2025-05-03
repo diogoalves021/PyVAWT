@@ -1,57 +1,58 @@
 # PyVAWT
 
-PyVAWT é um programa em Python para simular turbinas eólicas de eixo vertical (VAWTs) utilizando o método do cilindro atuador. Esse método modela o comportamento aerodinâmico de VAWTs representando o rotor como uma série de cilindros que interagem com o escoamento do vento.
+PyVAWT is a Python program for simulating Vertical Axis Wind Turbines (VAWTs) using the actuator disk method. This method models the aerodynamic behavior of VAWTs by representing the rotor as a series of cylinders interacting with the wind flow.
 
-## Descrição
+## Description
 
-O objetivo do projeto é fornecer insights sobre o desempenho de turbinas eólicas, sendo ideal para pesquisadores e engenheiros envolvidos na otimização e análise de performance de turbinas.
+The goal of the project is to provide insights into the performance of wind turbines, making it ideal for researchers and engineers involved in the optimization and performance analysis of turbines.
 
-**Status atual:**  
-O projeto está em desenvolvimento ativo. Atualmente, funcionalidades básicas já foram implementadas, incluindo:
+**Current status:**  
+The project is under active development. Basic features have already been implemented, including:
 
-1. Simulação de uma turbina
-2. Simulação de duas turbinas
-3. Modelo simples de esteira (wake)
-4. Leitura de parâmetros da simulação a partir de um arquivo `.json`
+1. Simulation of a single turbine
+2. Simulation of two turbines
+3. Simple wake model
+4. Reading simulation parameters from a `.json` file
 
-> **Atenção:** Este projeto ainda está em fase inicial de desenvolvimento. Não é recomendado para análises de engenharia críticas, pois a precisão e funcionalidades estão sujeitas a mudanças significativas.
-
----
-
-## Funcionalidades
-
-### 1. Geração de Dados Aerodinâmicos (`data_generation/generator.py`)
-
-Gera curvas de sustentação (Cl) e arrasto (Cd) utilizando o módulo `neuralfoil` da biblioteca [AeroSandbox](https://aerosandbox.com/), a partir das condições de simulação fornecidas.
-
-- Escolha de qualquer perfil NACA
-- Definição dos números de Reynolds e Mach
-- Possibilidade de simular múltiplos perfis de forma automática
-
-**✓ Alta precisão**  
-**✗ Tempo de geração alto (~10 minutos por perfil)**
-
-Ideal para análises detalhadas e confiáveis de desempenho aerodinâmico.
+> **Note:** This project is still in its early stages of development. It is not recommended for critical engineering analysis, as accuracy and features are subject to significant changes.
 
 ---
 
-### 2. Leitura de Dados Pré-Gerados (`data_reading/reader.py`)
+## Features
 
-Importa arquivos com curvas Cl/Cd obtidos por outras ferramentas (como XFoil, QBlade ou o próprio AeroSandbox) e interpola os dados para uso na simulação.
+### 1. Aerodynamic Data Generation (`data_generation/generator.py`)
 
-- Suporte a múltiplos formatos de entrada
-- Simulação rápida (tipicamente ~5 segundos)
+Generates lift (Cl) and drag (Cd) curves using the `neuralfoil` module from the [AeroSandbox](https://aerosandbox.com/) library, based on the provided simulation conditions.
 
-**✓ Alta velocidade de simulação**  
-**✗ Menor precisão (dependente da qualidade dos dados de entrada)**
+- Choose any NACA airfoil
+- Define Reynolds and Mach numbers
+- Ability to simulate multiple airfoils automatically
 
-Ideal para testes rápidos, estudos paramétricos ou otimizações.
+**✓ High precision**  
+**✗ High generation time (~10 minutes per airfoil)**
+
+Ideal for detailed and reliable aerodynamic performance analysis.
 
 ---
 
-## Uso
+### 2. Reading Pre-Generated Data (`data_reading/reader.py`)
 
-Crie um arquivo de configuração `config.json` com os parâmetros da simulação:
+Imports files with Cl/Cd curves obtained from other tools (such as XFoil, QBlade, or AeroSandbox itself) and interpolates the data for use in the simulation.
+
+- Supports multiple input formats
+- Fast simulation (typically ~5 seconds)
+
+**✓ High simulation speed**  
+**✗ Lower precision (dependent on the quality of input data)**
+
+Ideal for quick testing, parametric studies, or optimizations.
+
+---
+
+## Usage
+
+Create a configuration file `config.json` with the simulation parameters:
+
 
 ```json
 {
