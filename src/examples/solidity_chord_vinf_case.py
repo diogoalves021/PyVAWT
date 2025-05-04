@@ -29,8 +29,6 @@ def load_config(path='src/pyvawt/config/config.json'):
     """
     with open(path, 'r') as f:
         config = json.load(f)
-    #if novo_perfil:
-    #    config['simulation']['aero_profile'] = novo_perfil
     return config
 
 def save_config(config, path):
@@ -98,7 +96,7 @@ def run_simulation_case(params):
 
         # Carrega e configura
         config = load_config()
-        config['simulation']['airfoil_name'] = airfoil
+        config['simulation']['airfoil'] = airfoil
         config['turbine']['chord'] = chord
         config['turbine']['solidity'] = solidity
         config['environment']['Vinf'] = vinf
@@ -281,16 +279,6 @@ def runtest():
     - The list of parameters can be modified directly within the function.
     - This is the main function to be run as a script.
     """
-    # Lista dos parâmetros a serem testados
-    #airfoils = ['naca0018']
-    #chords = [0.875, 1.3125, 1.75, 2.1875, 2.625] #simulação para corda de 0.875 e suas combinações feitas.
-    #chords = [1.3125, 1.75, 2.1875, 2.625]
-    #solidities = [0.1, 0.3, 0.5, 0.7]
-    #vinfs = [3.115, 4.6725, 6.23, 7.7875, 9.345]
-    #chords = [1.3125]
-    #solidities = [0.1]
-    #vinfs = [9.345]
-
     # Load base config
     config = load_config()
 

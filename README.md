@@ -60,86 +60,44 @@ Create a configuration file `config.json` with the simulation parameters:
         "r": 17.5,
         "twist": 0.0,
         "delta": 0.0,
-        "chord": 1.75,
+        "chord": [0.875, 1.75],
         "B": 2,
-        "solidity": 0.1,
+        "solidity": [0.1, 0.3, 0.5, 0.7],
         "centerX": 0,
         "centerY": 0,
         "Omega": 1.427,
         "ntheta": 36
     },
     "environment": {
-        "Vinf": 6.23,
+        "Vinf": [6.23, 9.3],
         "rho": 1.225,
         "mu": 1.7894e-5
     },
     "simulation": {
         "var_omega_vinf": 1, 
         "num_turbines": 1,
-        "aero_profile": "data/experimental/NACA_0018.dat",
-        "airfoil_name": "naca0018",
+        "airfoil": ["naca0012", "naca4412", "naca2412", "naca0022"],
         "Re": 5000000,
         "Mach": 0.3,
         "include_360_deg_effects": false
     }
 }
 ```
+Note that parameters containing braces accept more than one number at a time. This means that when performing the calculations, as many simulations as necessary will be carried out in order to make the greatest number of possible combinations between the selected parameters automatically.
+
+Therefore, if you don't want your simulation to take too long, avoid selecting several parameters within the keys at once. Only do this if you intend to.
 
 After setting up your environment and configuring the simulation parameters, you can run the code using the following command:
 
 ```bash
-python3 -m examples.Solidity_chord_vinf_Fallstudie
+uv run src.examples.solidity_chord_vinf_case
 ```
 
-This will start the simulation, and the results will be displayed according to the parameters specified in the JSON configuration file, and in this case, according to the aerodynamic profiles you select in the code. The results will be saved in folders with the name of the selected parameters. In these folders there will be a json file with the parameters used in the simulation, an .eps file with the data graph and a .dat file with the data.
+This will start the simulation and the results will be displayed according to the parameters specified in the JSON configuration file. A folder will then be created with a unique name related to each parameter you specified, and this folder will contain the results. In each folder, there will be the following files:
 
-## Directories Structure
-
-```
-
-project_root/
-│
-├── src/                       # Main application code
-│   ├── __init__.py
-│   ├── main.py                # Main entry point
-│   ├── config/                # Static configuration files
-│   │   └── config.json
-│   ├── data_generation/       # Cl/Cd data generation
-│   │   ├── __init__.py
-│   │   └── generator.py
-│   ├── data_reading/          # Cl/Cd data reading and interpolation
-│   │   ├── __init__.py
-│   │   └── reader.py
-│   ├── simulation/            # Simulation core logic
-│   │   ├── __init__.py
-│   │   └── simulator.py
-│   └── utils/                 # Reusable utility functions
-│       ├── __init__.py
-│       └── helpers.py
-│
-├── tests/                     # Unit and functional tests
-│   ├── __init__.py
-│   ├── test_generator.py
-│   ├── test_reader.py
-│   └── test_simulation.py
-│
-├── examples/                  # Usage examples and case studies
-│   └── example_case_1/
-│       ├── params.json
-│       └── run_case.py
-│
-├── results/                   # Simulation results (organized by case/date)
-│   └── case_01/
-│       └── results.json
-│
-├── data/                      # Raw data or airfoil definitions
-│   └── airfoil_001.dat
-│
-├── README.md
-├── requirements.txt
-└── setup.py                   # Package installation file
-
-```
+1. JSON file with the simulation parameters.
+2. Image in .eps format of the CP x TSR graph.
+3. A .dat file with all the data generated for each TSR value.
 
 ## Dependecies
 
