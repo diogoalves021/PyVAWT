@@ -8,6 +8,7 @@ from scipy.optimize import root
 from typing import Callable, Tuple
 import matplotlib.pyplot as plt
 matplotlib.use("TkAgg")  # Define a different interactive backend
+from .data_generation import get_cl_cd_neuralfoil 
 
 # Coefficients of influence
 def panelIntegration(xvec, yvec, thetavec, ifunc):
@@ -402,8 +403,6 @@ class Turbine:
         Tilt angle of the turbine [rad].
     B : int
         Number of blades.
-    af : Callable[[np.ndarray], Tuple[np.ndarray, np.ndarray]]
-        Function that receives an array of angles of attack and returns lift (Cl) and drag (Cd) coefficients.
     Omega : float
         Rotational speed of the turbine [rad/s].
     centerX : float
@@ -411,16 +410,12 @@ class Turbine:
     centerY : float
         Y-coordinate of the turbine center [m].
     """
-    def __init__(self, r: float, chord: float, twist: float, delta: float, B: int,
-                af: Callable[[np.ndarray], Tuple[np.ndarray, np.ndarray]], Omega: float,
-                centerX: float, centerY: float):
-
+    def __init__(self, r: float, chord: float, twist: float, delta: float, B: int, Omega: float, centerX: float, centerY: float):
         self.r = r
         self.chord = chord
         self.twist = twist
         self.delta = delta
         self.B = B
-        self.af = af  #Função que retorna cl e cd
         self.Omega = Omega
         self.centerX = centerX
         self.centerY = centerY
@@ -443,8 +438,7 @@ class Environment:
         self.rho = rho
         self.mu = mu
 
-
-def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
+def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config, turbine_index, airfoil_index):
     """
     Calculates aerodynamic forces and performance coefficients for a VAWT using the actuator cylinder method.
 
@@ -506,7 +500,16 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     alpha = phi - turbine.twist # Angle of attack (flow angle minus blade pitch)
 
     # Lift and drag coefficients from airfoil function
-    cl, cd = turbine.af(alpha)
+    cl = np.zeros_like(alpha)
+    cd = np.zeros_like(alpha)
+
+    for i in range(len(alpha)):
+        cl[i], cd[i] = get_cl_cd_neuralfoil(
+            alpha=alpha[i],
+            W=W[i],
+            turbine_index=turbine_index,
+            airfoil_index=airfoil_index
+        )
 
     # Normal and tangential force coefficients in the rotor frame
     cn = cl * np.cos(phi) + cd * np.sin(phi)
@@ -561,7 +564,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
 #
 #-------- solve the system --------
 
-def residual(w, A, theta, k, turbines, env):
+def residual(w, A, theta, k, turbines, env, config, turbine_index, airfoil_index):
     """
     Residual function for the system of equations.
 
@@ -599,7 +602,7 @@ def residual(w, A, theta, k, turbines, env):
         idx_v = slice(ntheta * nturbines + (i - 1) * ntheta, ntheta * nturbines + 1 * ntheta)
         v = w[idx_v]
 
-        q[idx], ka, *_ = radialforce(u, v, theta, turbines[i - 1], env)
+        q[idx], ka, *_ = radialforce(u, v, theta, turbines[i - 1], env, config, turbine_index, airfoil_index)
 
     if nturbines == 1: # If there is only one turbine, use the k from the analysis
         k = np.array([ka])
@@ -609,7 +612,7 @@ def residual(w, A, theta, k, turbines, env):
 
     return (A @ q) * kmult - w
 
-def actuatorcylinder(turbines, env, ntheta):
+def actuatorcylinder(turbines, env, ntheta, config, turbine_index, airfoil_index):
     """
     Solves the actuator cylinder model for multiple turbines.
 
@@ -666,14 +669,8 @@ def actuatorcylinder(turbines, env, ntheta):
 
         # Define the residual for the single turbine problem
         def resid_single(x):
-            return residual(
-                x,
-                np.block([[Ax[idx, idx]], [Ay[idx, idx]]]),
-                theta,
-                [1.0],
-                turbines[i:i + 1],
-                env
-            )
+            params = (x, np.block([[Ax[idx, idx]], [Ay[idx, idx]]]), theta, [1.0], turbines[i:i + 1], env, config, turbine_index, airfoil_index)
+            return residual(*params)
         # Solve the non-linear system
         result = root(resid_single, w0, tol=tol)
         w = result.x
@@ -683,7 +680,9 @@ def actuatorcylinder(turbines, env, ntheta):
         # Separate components
         u = w[:ntheta]
         v = w[ntheta:]
-        q, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
+        # Definindo a tupla de parâmetros para radialforce
+        params = (u, v, theta, turbines[i], env, config, turbine_index, airfoil_index)
+        q, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(*params)
 
     if nturbines == 1:
         return CT, CP, Rp, Tp, Zp, theta
@@ -693,7 +692,8 @@ def actuatorcylinder(turbines, env, ntheta):
 
     # Define the residual for the coupled system
     def resid_multiple(x):
-        return residual(x, np.block([[Ax], [Ay]]), theta, k, turbines, env)
+        params = (x, np.block([[Ax], [Ay]]), theta, k, turbines, env, config, turbine_index, airfoil_index)
+        return residual(*params)  # Unpacking the parameters as arguments
     
     result = root(resid_multiple, w0, tol=tol)
     w = result.x
@@ -706,7 +706,14 @@ def actuatorcylinder(turbines, env, ntheta):
 
         u = w[idx]
         v = w[ntheta * nturbines + idx]
-        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, nturbines[i], env)
+        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(
+            u, v, theta,
+            turbine=turbines[i],
+            env=env,
+            config=config,
+            turbine_index=turbine_index,
+            airfoil_index=airfoil_index
+        )
     
     return CT, CP, Rp, Tp, Zp, theta
 
