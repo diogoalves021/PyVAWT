@@ -311,6 +311,7 @@ def matrixAssemble(centerX, centerY, radii, ntheta):
         Array of turbine radii.
     ntheta : int
         Number of angular divisions (theta).
+        Number of angular divisions (theta).
 
     Returns
     -------
@@ -328,7 +329,7 @@ def matrixAssemble(centerX, centerY, radii, ntheta):
     or recalculating them for pairs of turbines with different radii.
     """
     file = f"theta-{ntheta}.h5"
-    modulepath = os.getcwd() # uses the current directory as the path
+    modulepath = os.getcwd()  # Uses the current directory as the path
     if not os.path.isfile(file):
         filepath = precomputeMatrices(ntheta, modulepath)
     else:
@@ -382,6 +383,7 @@ def matrixAssemble(centerX, centerY, radii, ntheta):
     Ax = Dx + Wx
 
     return Ax, Ay, theta
+
 
 #---------------------------------------
 #
