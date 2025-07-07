@@ -296,36 +296,36 @@ def precomputeMatrices(ntheta, modulepath):
     return filepath
 
 
-def matrixAssemble(centerX, centerY, radius, ntheta):
+def matrixAssemble(centerX, centerY, radii, ntheta):
     """
-    Assemble the influence matrices for a single VAWT turbine based on 
-    its center coordinates, radius, and number of angular discretization points.
+    Assemble the global matrices for VAWT turbines based on their center 
+    coordinates, radii, and angular divisions.
 
     Parameters
     ----------
-    centerX : float
-        X-coordinate of the turbine center.
-    centerY : float
-        Y-coordinate of the turbine center.
-    radius : float
-        Radius of the turbine.
+    centerX : array_like
+        Array of x-coordinates of the turbine centers.
+    centerY : array_like
+        Array of y-coordinates of the turbine centers.
+    radii : array_like
+        Array of turbine radii.
     ntheta : int
-        Number of angular divisions (discretization steps along the turbine's perimeter).
+        Number of angular divisions (theta).
 
     Returns
     -------
-    Ax : ndarray of shape (ntheta, ntheta)
-        Assembled matrix combining self-induction and wake effects in the x-direction.
-    Ay : ndarray of shape (ntheta, ntheta)
-        Assembled matrix capturing self-induction effects in the y-direction.
-    theta : ndarray of shape (ntheta,)
-        Array of angular positions along the turbine’s circular path (in radians).
+    Ax : ndarray
+        Assembled global matrix Ax.
+    Ay : ndarray
+        Assembled global matrix Ay.
+    theta : ndarray
+        Array of angular values (theta).
 
     Notes
     -----
-    This function is tailored for simulations involving a single vertical-axis wind turbine (VAWT).
-    It loads precomputed influence matrices (Dx, Wx, Ay) for a turbine with the given angular resolution,
-    avoiding the need for pairwise interaction calculations present in multi-turbine simulations.
+    This function constructs the global matrices Ax, Ay, and theta for 
+    a set of turbines using precomputed self-influence matrices, 
+    or recalculating them for pairs of turbines with different radii.
     """
     file = f"theta-{ntheta}.h5"
     modulepath = os.getcwd() # uses the current directory as the path
@@ -341,10 +341,42 @@ def matrixAssemble(centerX, centerY, radius, ntheta):
         Wxself = f['Wx'][:]
         Ayself = f['Ay'][:]
 
-    # For a single turbine, all the global matrice is a single self set of parameters
-    Dx = Dxself.copy()
-    Wx = Wxself.copy()
-    Ay = Ayself.copy()
+    # Initialize global matrices
+    nturbines = len(radii)
+    Dx = np.zeros((nturbines * ntheta, nturbines * ntheta))
+    Wx = np.zeros((nturbines * ntheta, nturbines * ntheta))
+    Ay = np.zeros((nturbines * ntheta, nturbines * ntheta))
+
+    # Iterate over all turbines
+    for I in range(nturbines):
+        for J in range(nturbines):
+            # Normalize coordinates relative to turbine J's center
+            x = (centerX[I] - radii[I] * np.sin(theta) - centerX[J]) / radii[J]
+            y = (centerY[I] + radii[I] * np.cos(theta) - centerY[J]) / radii[J]
+
+            # Precomputed self-influence for the same turbine
+            if I == J:
+                Dxsub = Dxself
+                Wxsub = Wxself
+                Aysub = Ayself
+
+            # For turbines with the same radius already mapped
+            elif J < I and radii[I] == radii[J]:
+                Dxsub = Dx[J * ntheta:(J + 1) * ntheta, I * ntheta:(I + 1) * ntheta]
+                Aysub = Ay[J * ntheta:(J + 1) * ntheta, I * ntheta:(I + 1) * ntheta]
+
+                # Recalculate the wake term
+                Wxsub = WxIJ(x, y, theta)
+
+            else:
+                Dxsub = DxIJ(x, y, theta)
+                Wxsub = WxIJ(x, y, theta)
+                Aysub = AyIJ(x, y, theta)
+
+            # Assemble the submatrices into the global matrices
+            Dx[I * ntheta:(I + 1) * ntheta, J * ntheta:(J + 1) * ntheta] = Dxsub
+            Wx[I * ntheta:(I + 1) * ntheta, J * ntheta:(J + 1) * ntheta] = Wxsub
+            Ay[I * ntheta:(I + 1) * ntheta, J * ntheta:(J + 1) * ntheta] = Aysub
 
     # Calculate Ax matrix
     Ax = Dx + Wx
@@ -373,6 +405,10 @@ class Turbine:
         Number of blades.
     Omega : float
         Rotational speed of the turbine [rad/s].
+    centerX : float
+        X-coordinate of the turbine center [m].
+    centerY : float
+        Y-coordinate of the turbine center [m].
     """
     def __init__(self, r: float, chord: float, twist: float, delta: float, B: int, Omega: float, centerX: float, centerY: float):
         self.r = r
@@ -528,103 +564,157 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
 #
 #-------- solve the system --------
 
-def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index):
+def residual(w, A, theta, k, turbines, env, config, turbine_index, airfoil_index):
     """
-    Compute the residual for the actuator-cylinder equations of a single VAWT.
+    Residual function for the system of equations.
 
     Parameters
     ----------
-    w : ndarray of shape (2*ntheta,)
-        Solution vector [u_0, ..., u_{ntheta-1}, v_0, ..., v_{ntheta-1}].
-    A : ndarray of shape (2*ntheta, ntheta)
-        Combined influence matrix: [Ax; Ay].
-    theta : ndarray of shape (ntheta,)
-        Angular discretization points along the turbine perimeter.
-    turbine : Turbine
-        Single turbine object containing geometry and performance data.
+    w : numpy.ndarray
+        Vector containing the values for the solution at each point.
+    A : numpy.ndarray
+        The matrix representing the system of equations.
+    theta : numpy.ndarray
+        Array of angles at each radial position.
+    k : numpy.ndarray
+        Correction factor for each turbine.
+    turbines : list of Turbine
+        List containing the turbine objects to be used in the simulation.
     env : Environment
-        Environmental conditions (wind speed, density, viscosity, etc.).
-    config : dict or Config
-        Additional configuration parameters for the simulation.
-    turbine_index : int
-        Index of this turbine in a larger fleet (for lookup of data tables).
-    airfoil_index : int
-        Index of the airfoil used on this turbine.
+        The environmental conditions including wind speed, air density, and viscosity.
 
     Returns
     -------
-    ndarray of shape (2*ntheta,)
-        Residual vector: (A @ q) * k_mult - w.
+    numpy.ndarray
+        The residual of the system of equations.
     """
     # Initial configuration
-    ntheta = len(theta)
+    ntheta = len(theta)                     
+    nturbines = len(w) // (2 * ntheta)      
+    q = np.zeros(ntheta * nturbines)        
+    ka = 0.0                                 
 
-    # split u and v
-    u = w[:ntheta]
-    v = w[ntheta:]
+    for i in range(1, nturbines + 1):
+        idx = slice((i - 1) * ntheta, i * ntheta)
 
-    # Compute radial force, returns q (length ntheta) and the scalar kappa (ka)
-    q, ka, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index)
+        u = w[idx]
 
-    # Build k_mult twice (for u- and v-equations)
-    kmult = np.full(2 * ntheta, ka)
+        idx_v = slice(ntheta * nturbines + (i - 1) * ntheta, ntheta * nturbines + 1 * ntheta)
+        v = w[idx_v]
+
+        q[idx], ka, *_ = radialforce(u, v, theta, turbines[i - 1], env, config, turbine_index, airfoil_index)
+
+    if nturbines == 1: # If there is only one turbine, use the k from the analysis
+        k = np.array([ka])
+    
+    kmult = np.repeat(k, ntheta)
+    kmult = np.concatenate([kmult, kmult])
 
     return (A @ q) * kmult - w
 
-def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index):
+def actuatorcylinder(turbines, env, ntheta, config, turbine_index, airfoil_index):
     """
-    Solve the actuator-cylinder model for a single VAWT turbine.
+    Solves the actuator cylinder model for multiple turbines.
 
     Parameters
     ----------
-    turbine : Turbine
-        The turbine object to be used in the simulation.
+    turbines : list of Turbine
+        List of turbines to be used in the simulation.
     env : Environment
-        Environmental conditions (wind speed, density, viscosity, etc.).
+        The environmental conditions including wind speed, air density, and viscosity.
     ntheta : int
-        Number of angular discretization points along the turbine perimeter.
-    config : dict or Config
-        Additional configuration parameters for the simulation.
-    turbine_index : int
-        Index of this turbine in a larger fleet (for data lookup).
-    airfoil_index : int
-        Index of the airfoil used on this turbine.
+        The number of discretized angular positions.
 
     Returns
     -------
-    CT : float
-        Thrust coefficient of the turbine.
-    CP : float
-        Power coefficient of the turbine.
-    Rp : ndarray of shape (ntheta,)
-        Radial force distribution around the turbine.
-    Tp : ndarray of shape (ntheta,)
-        Tangential force distribution around the turbine.
-    Zp : ndarray of shape (ntheta,)
-        Radial positions corresponding to the computed forces.
-    theta : ndarray of shape (ntheta,)
-        Angular discretization points (radians).
+    CT : numpy.ndarray
+        Power coefficient for each turbine.
+    CP : numpy.ndarray
+        Performance coefficient for each turbine.
+    Rp : numpy.ndarray
+        Radial force for each turbine at each angle.
+    Tp : numpy.ndarray
+        Tangential force for each turbine at each angle.
+    Zp : numpy.ndarray
+        Radial position of the forces.
+    theta : numpy.ndarray
+        Array of angles at each radial position.
     """
-    # Set turbine geometry
-    centerX = turbine.centerX
-    centerY = turbine.centerY
-    radius = turbine.r
+    # List comprehensions for turbine parameters
+    centerX = np.array([turbine.centerX for turbine in turbines])
+    centerY = np.array([turbine.centerY for turbine in turbines])
+    radii = np.array([turbine.r for turbine in turbines])
 
     # Assemble global matrices
-    Ax, Ay, theta = matrixAssemble(centerX, centerY, radius, ntheta)
-    A = np.vstack([Ax, Ay])
+    Ax, Ay, theta = matrixAssemble(centerX, centerY, radii, ntheta)
 
-    w0 = np.zeros(2 * len(theta))
+    # Initial configuration
+    ntheta = len(theta)
+    nturbines = len(turbines)
+    tol = 1e-6
+    CT = np.zeros(nturbines)
+    CP = np.zeros(nturbines)
+    Rp = np.zeros((ntheta, nturbines))
+    Tp = np.zeros((ntheta, nturbines))
+    Zp = np.zeros((ntheta, nturbines))
+    q = np.zeros(ntheta)
 
-    sol = root(residual, w0, args=(A, theta, turbine, env, config, turbine_index, airfoil_index), tol=1e-6)
-    if not sol.success:
-        raise RuntimeError(f'Solver did not converge: {sol.message}')
+    # Non-linear correction factors
+    k = np.zeros(nturbines)
 
-    w = sol.x
-    u, v = w[:len(theta)], w[len(theta):]
+    # Solve for each turbine individually
+    for i in range(nturbines):
+        w0 = np.zeros(ntheta * 2)
+        idx = slice(i * ntheta, (i + 1) * ntheta)
 
-    q, ka, CT, CP, Rp, Tp, Zp = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index)
+        # Define the residual for the single turbine problem
+        def resid_single(x):
+            params = (x, np.block([[Ax[idx, idx]], [Ay[idx, idx]]]), theta, [1.0], turbines[i:i + 1], env, config, turbine_index, airfoil_index)
+            return residual(*params)
+        # Solve the non-linear system
+        result = root(resid_single, w0, tol=tol)
+        w = result.x
+        if not result.success:
+            print(f'Solver did not converge for turbine {i + 1}. Message: {result.message}')
 
+        # Separate components
+        u = w[:ntheta]
+        v = w[ntheta:]
+        # Definindo a tupla de parâmetros para radialforce
+        params = (u, v, theta, turbines[i], env, config, turbine_index, airfoil_index)
+        q, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(*params)
+
+    if nturbines == 1:
+        return CT, CP, Rp, Tp, Zp, theta
+
+    # Solve the coupled system
+    w0 = np.zeros(nturbines * ntheta * 2)
+
+    # Define the residual for the coupled system
+    def resid_multiple(x):
+        params = (x, np.block([[Ax], [Ay]]), theta, k, turbines, env, config, turbine_index, airfoil_index)
+        return residual(*params)  # Unpacking the parameters as arguments
+    
+    result = root(resid_multiple, w0, tol=tol)
+    w = result.x
+    if not result.success:
+        print(f'Solver did not converge for the coupled system. Message: {result.message}')
+    
+    # Process results for each turbine
+    for i in range(nturbines):
+        idx = slice(i * ntheta, (i + 1) * ntheta)
+
+        u = w[idx]
+        v = w[ntheta * nturbines + idx]
+        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(
+            u, v, theta,
+            turbine=turbines[i],
+            env=env,
+            config=config,
+            turbine_index=turbine_index,
+            airfoil_index=airfoil_index
+        )
+    
     return CT, CP, Rp, Tp, Zp, theta
 
 
