@@ -97,7 +97,7 @@ def run_simulation_case(params):
     os.makedirs(result_dir, exist_ok=True)
     save_config(config, os.path.join(result_dir, 'config_used.json'))
 
-    turbine, env, sim_params, turb_params, env_params, _, ntheta = initialize_turbine_and_environment(config)
+    turbines, env, sim_params, turb_params, env_params, _, ntheta = initialize_turbine_and_environment(config)
     B = config['turbine']['B']
     r = config['turbine']['r']
     var_omega_vinf = sim_params['var_omega_vinf']
@@ -124,10 +124,10 @@ def run_simulation_case(params):
 
             if var_omega_vinf == 0:
                 for i, tsr in enumerate(tsrvec):
-                    turbine.Omega = vinf * tsr / r
-                    CT, CP, Rp, Tp, Zp, theta = actuatorcylinder([turbine], env, ntheta, config, turbine_index, airfoil_index)
-                    CPvec[i] = CP
-                    CTvec[i] = CT
+                    turbines[0].Omega = vinf * tsr / r
+                    CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(turbines, env, ntheta, config, turbine_index, airfoil_index)
+                    CPvec[i] = CP[0]
+                    CTvec[i] = CT[0]
                     Rpvec[i] = Rp[0].item()
                     Tpvec[i] = Tp[0].item()
                     Zpvec[i] = Zp[0].item()
@@ -135,11 +135,11 @@ def run_simulation_case(params):
 
             elif var_omega_vinf == 1:
                 for i, tsr in enumerate(tsrvec):
-                    turbine.Omega = 13.62 * 2 * np.pi / 60.0
-                    env.Vinf = turbine.Omega * r / tsr
-                    CT, CP, Rp, Tp, Zp, theta = actuatorcylinder([turbine], env, ntheta, config, turbine_index, airfoil_index)
-                    CPvec[i] = CP
-                    CTvec[i] = CT
+                    turbines[0].Omega = 13.62 * 2 * np.pi / 60.0
+                    env.Vinf = turbines[0].Omega * r / tsr
+                    CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(turbines, env, ntheta, config, turbine_index, airfoil_index)
+                    CPvec[i] = CP[0]
+                    CTvec[i] = CT[0]
                     Rpvec[i] = Rp[0].item()
                     Tpvec[i] = Tp[0].item()
                     Zpvec[i] = Zp[0].item()
@@ -202,8 +202,8 @@ def initialize_turbine_and_environment(config):
 
     Returns
     -------
-    turbine : Turbine
-        The initialized Turbine object.
+    turbines : list of Turbine
+        List containing the initialized Turbine object(s).
     env : Environment
         The Environment object initialized with freestream conditions.
     simulation_params : dict
@@ -244,12 +244,13 @@ def initialize_turbine_and_environment(config):
     mu = environment_params['mu']
 
     # Criação da turbina
-    turbine = Turbine(r, chord, twist, delta, B, Omega, centerX, centerY)
+    turbines = [None] * 1
+    turbines[0] = Turbine(r, chord, twist, delta, B, Omega, 0.0, 0.0)
 
     # Criação do ambiente
     env = Environment(Vinf, rho, mu)
 
-    return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
+    return turbines, env, simulation_params, turbine_params, environment_params, r, ntheta
 
 def runtest():
     """
