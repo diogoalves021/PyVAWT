@@ -17,3 +17,7 @@ src/start_sim.py
 .eps
 scripts/
 docs/
+8-*
+9-*
+10-*
+start_*
