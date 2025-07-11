@@ -17,7 +17,12 @@ src/start_sim.py
 .eps
 scripts/
 docs/
-8-*
-9-*
-10-*
-start_*
+1-*
+2-*
+3-*
+4-*
+5-*
+6-*
+7-*
+run_castelli2011.py
+run_sanvito2021_H-shaped.py

@@ -257,14 +257,13 @@ def run_simulation():
     solidities = config["turbine"]["solidity"]
     vinfs = config["environment"]["Vinf"]
 
-    combinations = [
-        (ai, ti, c, s, v)
-        for ai in airfoil_indices
-        for ti in turbine_indices
-        for c in chords
-        for s in solidities
-        for v in vinfs
-    ]
+    combinations = []
+    for ai in airfoil_indices:
+        for ti in turbine_indices:
+            for chord in chords:
+                for sol in solidities:
+                    for vinf in vinfs:
+                        combinations.append((ai, ti, chord, sol, vinf))
 
     print(f"Iniciando {len(combinations)} simulações paralelas...\n")
 
