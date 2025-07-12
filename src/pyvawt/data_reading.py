@@ -119,5 +119,3 @@ def readaerodyn(filename):
     return af
 
 #af = readaerodyn('data/NACA_0012_mod.dat')
-print('--' * 12)
-print('\nStarting simulation...\n')

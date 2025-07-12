@@ -2,10 +2,14 @@ import json
 import os
 import time
 import csv
+import traceback
 import numpy as np
 import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from tqdm import tqdm
+from rich.progress import Progress, TimeElapsedColumn, TimeRemainingColumn, BarColumn, TextColumn
+from rich.console import Console
+from rich.table import Table
+from rich import box
 from src.pyvawt import actuatorcylinder, Turbine, Environment
 
 
@@ -160,7 +164,7 @@ def run_simulation_case(params, base_config):
 
     start_time = time.time()
     try:
-        print(f"Simulando: {folder_name}")
+        print(f"Simulating: {folder_name}")
         n = 20
         tsrvec = np.linspace(1, 7, n)
         CPvec = np.zeros(n)
@@ -229,6 +233,7 @@ def run_simulation_case(params, base_config):
             "name": folder_name,
             "status": f"ERROR: {e}",
             "time_sec": round(time.time() - start_time, 2),
+            "traceback": traceback.format_exc(limit=2),
         }
 
 
@@ -265,17 +270,31 @@ def run_simulation():
                     for vinf in vinfs:
                         combinations.append((ai, ti, chord, sol, vinf))
 
-    print(f"Iniciando {len(combinations)} simulações paralelas...\n")
+    print(f"Initiating {len(combinations)} parallel simulation cases...\n")
 
+    console = Console()
     results = []
-    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {
-            executor.submit(run_simulation_case, params, config): params
-            for params in combinations
-        }
 
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Simulações"):
-            results.append(future.result())
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=None),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Simulating cases...", total=len(combinations))
+
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            futures = {
+                executor.submit(run_simulation_case, params, config): params
+                for params in combinations
+            }
+
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                progress.advance(task)
 
     log_path = os.path.join("src/results/temporary_results", "log_simulacoes.csv")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -284,7 +303,17 @@ def run_simulation():
         writer.writeheader()
         writer.writerows(results)
 
-    print(f"\nLog salvo em: {log_path}")
+    table = Table(title="Simulation Summary", box=box.SIMPLE_HEAVY)
+    table.add_column("Case", style="cyan", no_wrap=True)
+    table.add_column("Status", style="green")
+    table.add_column("Time (s)", justify="right")
+
+    for res in results:
+        status_color = "green" if res["status"] == "OK" else "red"
+        table.add_row(res["name"], f"[{status_color}]{res['status']}[/{status_color}]", str(res["time_sec"]))
+
+    console.print(table)
+    console.print(f"\n[bold green]Log saved to:[/bold green] {log_path}")
 
 
 if __name__ == "__main__":

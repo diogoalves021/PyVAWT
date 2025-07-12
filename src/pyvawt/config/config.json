@@ -1,18 +1,18 @@
 {
     "turbine": {
-        "r": 0.515,
+        "r": 35.0,
         "twist": 0.0,
         "delta": 0.0,
         "chord": [
-            0.086
+            1.75
         ],
-        "B": 3,
+        "B": 2,
         "solidity": [
-            0.25
+            0.1
         ],
         "centerX": 0,
         "centerY": 0,
-        "Omega": 41.89,
+        "Omega": 1.427,
         "ntheta": 36
     },
     "environment": {
@@ -26,7 +26,7 @@
         "var_omega_vinf": 1,
         "num_turbines": 1,
         "airfoil": [
-            "naca0021"
+            "naca0018"
         ],
         "Re": 200000,
         "Mach": 0.3,

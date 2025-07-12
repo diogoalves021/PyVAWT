@@ -41,6 +41,3 @@ def get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index):
     )
     return aero["CL"], aero["CD"]
 
-
-print('--' * 12)
-print('\nInicializando a simulação...\n')
