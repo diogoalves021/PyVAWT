@@ -2,7 +2,7 @@ from src.pyvawt.main import run_simulation, load_config, save_config
 import os
 
 # Load the original config file
-config = load_config('src/pyvawt/config/config.json')
+config = load_config('src/pyvawt/config/config.yaml')
 
 # Changing the parameters
 config['turbine']['r'] = 0.755
@@ -25,7 +25,7 @@ config['simulation']['num_turbines'] = 1
 config['simulation']['airfoil'] = ["naca0021"]
 
 # Saving temporary config file
-temp_path = 'src/pyvawt/config/config.json'
+temp_path = 'src/pyvawt/config/config.yaml'
 save_config(config, temp_path)
 
 # Run simulation

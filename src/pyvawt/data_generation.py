@@ -1,10 +1,32 @@
-import json
+import yaml
 import numpy as np
 import aerosandbox as asb
 
-def load_config(path="src/pyvawt/config/config.json"):
-    with open(path, "r") as f:
-        return json.load(f)
+
+def load_config(path='src/pyvawt/config/config.yaml'):
+    # Load YAML into a dict
+    with open(path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    if config is None:
+        raise ValueError(f"O arquivo '{path}' está vazio ou inválido.")
+
+    # Garante que todos os campos esperados existam
+    for section in ['turbine', 'environment', 'simulation']:
+        if section not in config:
+            raise KeyError(f"Seção obrigatória '{section}' ausente no arquivo de configuração.")
+
+    # Garante que certos campos sejam listas
+    def ensure_list(section, key):
+        if key in config[section] and not isinstance(config[section][key], list):
+            config[section][key] = [config[section][key]]
+
+    ensure_list('turbine', 'chord')
+    ensure_list('turbine', 'solidity')
+    ensure_list('environment', 'Vinf')
+    ensure_list('simulation', 'airfoil')
+
+    return config
 
 def get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index):
     """

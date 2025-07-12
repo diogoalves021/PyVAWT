@@ -3,6 +3,8 @@ import os
 import time
 import csv
 import traceback
+import yaml
+import copy
 import numpy as np
 import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -12,38 +14,65 @@ from rich.table import Table
 from rich import box
 from src.pyvawt import actuatorcylinder, Turbine, Environment
 
-
-def load_config(path="src/pyvawt/config/config.json"):
+def load_config(path='src/pyvawt/config/config.yaml'):
     """
-    Loads the simulation configuration from a JSON file.
+    Loads the simulation configuration from a YAML file and returns it as a dictionary.
 
     Parameters
     ----------
-    novo_perfil : str, optional
-        Name of a new airfoil profile to override the one in the configuration file.
+    path : str, optional
+        Path to the `.yaml` configuration file.
+        Default is 'src/pyvawt/config/config.yaml'.
 
     Returns
     -------
     dict
-        The loaded configuration dictionary, possibly modified with the new airfoil profile.
-    """
-    with open(path, "r") as f:
-        return json.load(f)
+        Dictionary containing the simulation parameters loaded from the YAML file.
 
+    Raises
+    ------
+    FileNotFoundError
+        If the specified file does not exist.
+    yaml.YAMLError
+        If there is an error parsing the YAML file.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Configuration file not found: {path}")
+    
+    try:
+        with open(path, 'r') as f:
+            return yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise yaml.YAMLError(f"Error parsing YAML file {path}:\n{e}")
 
 def save_config(config, path):
     """
-    Saves the simulation configuration to a JSON file.
+    Saves a configuration dictionary to a YAML file.
 
     Parameters
     ----------
     config : dict
-        Configuration dictionary to save.
+        Dictionary with simulation parameters to save.
+
     path : str
-        Destination path for the JSON file.
+        Full path to the output `.yaml` file.
+        If the file exists, it will be overwritten.
+
+    Notes
+    -----
+    - Keys will be preserved in the original order (sort_keys=False).
+    - Creates directories as needed.
+    - Forces the file extension to .yaml if not present.
+    - Uses indentation for human-readable output.
     """
-    with open(path, "w") as f:
-        json.dump(config, f, indent=4)
+    if not path.endswith(".yaml"):
+        path += ".yaml"
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    with open(path, 'w') as f:
+        yaml.dump(config, f, sort_keys=False, indent=4)
+
 
 
 def initialize_turbine_and_environment(config):
@@ -139,7 +168,7 @@ def run_simulation_case(params, base_config):
     - Results are saved in a subdirectory of 'src/results/temporary_results'.
     """
     airfoil_index, turbine_index, chord, solidity, vinf = params
-    config = json.loads(json.dumps(base_config))  # deep copy
+    config = copy.deepcopy(base_config)  # Deep copy
 
     airfoil_name = config["simulation"]["airfoil"][airfoil_index]
     config["simulation"]["airfoil"] = airfoil_name
@@ -153,7 +182,7 @@ def run_simulation_case(params, base_config):
     )
     result_dir = os.path.join("src/results/temporary_results", folder_name)
     os.makedirs(result_dir, exist_ok=True)
-    save_config(config, os.path.join(result_dir, "config_used.json"))
+    save_config(config, os.path.join(result_dir, "config_used.yaml"))
 
     turbine, env, sim_params, _, _, _, ntheta = initialize_turbine_and_environment(
         config

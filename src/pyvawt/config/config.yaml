@@ -1,0 +1,26 @@
+turbine:
+    r: 3.0
+    twist: 0.0
+    delta: 0.0
+    chord:
+    - 0.25
+    B: 3
+    solidity:
+    - 0.125
+    centerX: 0
+    centerY: 0
+    Omega: 5.03
+    ntheta: 36
+environment:
+    Vinf:
+    - 5.0
+    rho: 1.225
+    mu: 1.7894e-05
+simulation:
+    var_omega_vinf: 1
+    num_turbines: 1
+    airfoil:
+    - naca0021
+    Re: 200000
+    Mach: 0.3
+    include_360_deg_effects: false
