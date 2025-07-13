@@ -3,12 +3,16 @@ import math
 import os
 import h5py
 import matplotlib
+import time
+import traceback
+import copy
 from scipy.integrate import quad
 from scipy.optimize import root
 from typing import Callable, Tuple
 import matplotlib.pyplot as plt
-matplotlib.use("TkAgg")  # Define a different interactive backend
-from .data_generation import get_cl_cd_neuralfoil 
+# matplotlib.use("TkAgg") Define a different interactive backend
+from .data_generation import get_cl_cd_neuralfoil
+from .utils import save_config 
 
 # Coefficients of influence
 def panelIntegration(xvec, yvec, thetavec, ifunc):
@@ -626,6 +630,195 @@ def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index)
     
     return CT, CP, Rp, Tp, Zp, theta
 
+def initialize_turbine_and_environment(config):
+    """
+    Initializes the turbine and environment objects based on the configuration file.
+
+    Parameters
+    ----------
+    config : dict
+        Dictionary containing simulation, turbine, and environment parameters.
+
+    Returns
+    -------
+    turbine : Turbine
+        The initialized Turbine object.
+    env : Environment
+        The Environment object initialized with freestream conditions.
+    simulation_params : dict
+        Dictionary with general simulation parameters.
+    turbine_params : dict
+        Dictionary with turbine-specific parameters.
+    environment_params : dict
+        Dictionary with environmental parameters.
+    r : float
+        Rotor radius (in meters).
+    ntheta : int
+        Number of azimuthal discretization points.
+
+    Notes
+    -----
+    The function also reads airfoil data using the `readaerodyn_neuralfoil` function
+    and uses it to initialize the turbine's aerodynamic properties.
+    """
+    turbine_params = config["turbine"]
+    environment_params = config["environment"]
+    simulation_params = config["simulation"]
+
+    r = turbine_params["r"]
+    twist = turbine_params["twist"]
+    delta = turbine_params["delta"]
+    chord = turbine_params["chord"]
+    B = turbine_params["B"]
+    solidity = turbine_params["solidity"]
+    centerX = turbine_params["centerX"]
+    centerY = turbine_params["centerY"]
+    Omega = turbine_params["Omega"]
+    ntheta = turbine_params["ntheta"]
+
+    Vinf = environment_params["Vinf"]
+    rho = environment_params["rho"]
+    mu = environment_params["mu"]
+
+    turbine = Turbine(r, chord, twist, delta, B, Omega, centerX, centerY)
+    env = Environment(Vinf, rho, mu)
+
+    return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
+
+
+def run_simulation_case(params, base_config):
+    """
+    Runs a single aerodynamic simulation case based on the provided parameters.
+
+    Parameters
+    ----------
+    params : tuple
+        A tuple containing the parameters:
+        - airfoil : str
+            Name of the airfoil profile.
+        - chord : float
+            Chord length of the blade (in meters).
+        - solidity : float
+            Solidity of the turbine.
+        - vinf : float
+            Freestream wind velocity (in m/s).
+
+    Returns
+    -------
+    dict
+        Dictionary summarizing the result of the simulation. Contains:
+        - 'name' : str
+            Folder name used to store the results.
+        - 'airfoil', 'chord', 'solidity', 'vinf' : input parameters
+        - 'status' : str
+            'OK' if successful, or error message if failed.
+        - 'time_sec' : float
+            Duration of the simulation in seconds.
+
+    Notes
+    -----
+    - The function initializes a turbine and environment, runs simulations across a TSR range,
+      and stores results including a .dat file and a Cp vs TSR plot.
+    - Assumes the use of 1 turbine for now.
+    - Results are saved in a subdirectory of 'src/results/temporary_results'.
+    """
+    airfoil_index, turbine_index, chord, solidity, vinf = params
+    config = copy.deepcopy(base_config)  # Deep copy
+
+    airfoil_name = config["simulation"]["airfoil"][airfoil_index]
+    config["simulation"]["airfoil"] = airfoil_name
+    config["turbine"]["chord"] = chord
+    config["turbine"]["solidity"] = solidity
+    config["environment"]["Vinf"] = vinf
+    angular_velocity = config["turbine"]["Omega"]
+
+    folder_name = (
+        f"{airfoil_name}_ch{chord}_sol{solidity}_vinf{vinf}".replace(".", "p")
+    )
+    result_dir = os.path.join("src/results/temporary_results", folder_name)
+    os.makedirs(result_dir, exist_ok=True)
+    save_config(config, os.path.join(result_dir, "config_used.yaml"))
+
+    turbine, env, sim_params, _, _, _, ntheta = initialize_turbine_and_environment(
+        config
+    )
+    r = config["turbine"]["r"]
+    var_omega_vinf = sim_params["var_omega_vinf"]
+    num_turbines = sim_params["num_turbines"]
+
+    start_time = time.time()
+    try:
+        print(f"Simulating: {folder_name}")
+        n = 20
+        tsrvec = np.linspace(1, 7, n)
+        CPvec = np.zeros(n)
+        CTvec = np.zeros(n)
+        Rpvec = np.zeros(n)
+        Tpvec = np.zeros(n)
+        Zpvec = np.zeros(n)
+
+        if var_omega_vinf == 0:
+            for i, tsr in enumerate(tsrvec):
+                turbine.Omega = vinf * tsr / r
+                CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
+                    turbine, env, ntheta, config, turbine_index, airfoil_index
+                )
+                CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
+                    CP,
+                    CT,
+                    Rp[0],
+                    Tp[0],
+                    Zp[0],
+                )
+
+        elif var_omega_vinf == 1:
+            for i, tsr in enumerate(tsrvec):
+                turbine.Omega = angular_velocity
+                env.Vinf = turbine.Omega * r / tsr
+                CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
+                    turbine, env, ntheta, config, turbine_index, airfoil_index
+                )
+                CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
+                    CP,
+                    CT,
+                    Rp[0],
+                    Tp[0],
+                    Zp[0],
+                )
+
+        else:
+            raise ValueError("var_omega_vinf inválido.")
+
+        data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
+        header = "TSR\tCP\tCT\tRp\tTp\tZp"
+        np.savetxt(
+            os.path.join(result_dir, f"results_{airfoil_name}.dat"),
+            data_to_save,
+            header=header,
+            fmt="%.6f",
+            delimiter="\t",
+        )
+
+        plt.figure()
+        plt.plot(tsrvec, CPvec)
+        plt.title(f"$C_p$ x TSR - {airfoil_name}")
+        plt.xlabel("TSR")
+        plt.ylabel("$C_p$")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(os.path.join(result_dir, f"cp_curve_{airfoil_name}.png"))
+        plt.close()
+
+        elapsed = time.time() - start_time
+        return {"name": folder_name, "status": "OK", "time_sec": round(elapsed, 2)}
+
+    except Exception as e:
+        return {
+            "name": folder_name,
+            "status": f"ERROR: {e}",
+            "time_sec": round(time.time() - start_time, 2),
+            "traceback": traceback.format_exc(limit=2),
+        }
 
 #------------------------------------
 #-------- Auxiliary Methods --------
