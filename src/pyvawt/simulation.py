@@ -630,6 +630,57 @@ def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index)
     
     return CT, CP, Rp, Tp, Zp, theta
 
+def get_radius_from_config(turbine_config: dict) -> float:
+    """
+    Computes the rotor radius of a vertical-axis wind turbine based on the configuration.
+
+    The radius can be defined in two ways:
+    - 'manual': uses the provided value of 'r' directly.
+    - 'auto': calculates the radius from other parameters using the formula:
+        r = (B * chord) / (solidity * H)
+
+    Parameters
+    ----------
+    turbine_config : dict
+        Dictionary containing turbine parameters. Must include:
+        - radius_mode : str
+            Either 'manual' or 'auto'.
+        - If 'manual': must provide 'r'.
+        - If 'auto' : must provide 'B', 'chord', 'solidity', and 'H'.
+
+    Returns
+    -------
+    float
+        The computed or retrieved rotor radius.
+
+    Raises
+    ------
+    ValueError
+        If required parameters are missing or if an invalid mode is specified.
+    """
+    mode = turbine_config.get("radius_mode", "manual")
+
+    if mode == "manual":
+        r = turbine_config.get("r", None)
+        if r is None:
+            raise ValueError("Mode 'manual' selected, but 'r' was not provided.")
+        return r
+
+    elif mode == "auto":
+        H = turbine_config.get("H", None)
+        if H is None:
+            raise ValueError("Mode 'auto' selected, but 'H' was not provided.")
+        B = turbine_config.get("B")
+        chord = turbine_config.get("chord")
+        solidity = turbine_config.get("solidity")
+        if None in (B, chord, solidity):
+            raise ValueError("Missing parameters for automatic radius calculation.")
+        return (B * chord) / (solidity * H)
+
+    else:
+        raise ValueError(f"Invalid radius mode: {mode}. Use 'manual' or 'auto'.")
+
+
 def initialize_turbine_and_environment(config):
     """
     Initializes the turbine and environment objects based on the configuration file.
@@ -665,7 +716,9 @@ def initialize_turbine_and_environment(config):
     environment_params = config["environment"]
     simulation_params = config["simulation"]
 
-    r = turbine_params["r"]
+    r = get_radius_from_config(turbine_params)
+    config["turbine"]["r"] = r
+
     twist = turbine_params["twist"]
     delta = turbine_params["delta"]
     chord = turbine_params["chord"]
@@ -684,7 +737,6 @@ def initialize_turbine_and_environment(config):
     env = Environment(Vinf, rho, mu)
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
-
 
 def run_simulation_case(params, base_config):
     """
@@ -820,8 +872,7 @@ def run_simulation_case(params, base_config):
             "traceback": traceback.format_exc(limit=2),
         }
 
-#------------------------------------
-#-------- Auxiliary Methods --------
+# ======== Auxiliary Methods =========
 
 def trapz(x, y):
     """

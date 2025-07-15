@@ -1,5 +1,7 @@
 turbine:
-    r: 3.0
+    radius_mode: manual       # Options: auto or manual
+    r: 3.0                    # Used if radius_mode == manual
+    H: 3.0                    # Used if radius_mode == auto
     twist: 0.0
     delta: 0.0
     chord:

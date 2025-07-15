@@ -12,7 +12,7 @@ The project is under active development. Basic features have already been implem
 1. Simulation of a single turbine
 2. Simulation of two turbines
 3. Simple wake model
-4. Reading simulation parameters from a `.json` file
+4. Reading simulation parameters from a `.yaml` file
 
 > **Note:** This project is still in its early stages of development. It is not recommended for critical engineering analysis, as accuracy and features are subject to significant changes.
 
@@ -29,7 +29,7 @@ Generates lift (Cl) and drag (Cd) curves using the `neuralfoil` module from the 
 - Ability to simulate multiple airfoils automatically
 
 **✓ High precision**  
-**✗ High generation time (~10 minutes per airfoil)**
+**✗ High generation time (~12 minutes per airfoil)**
 
 Ideal for detailed and reliable aerodynamic performance analysis.
 
@@ -51,36 +51,45 @@ Ideal for quick testing, parametric studies, or optimizations.
 
 ## Usage
 
-Create a configuration file `config.json` inside the `config` folder with the simulation parameters:
+Create a configuration file `config.yaml` inside the `config` folder with the simulation parameters:
 
-```json
-{
-    "turbine": {
-        "r": 17.5,
-        "twist": 0.0,
-        "delta": 0.0,
-        "chord": [0.875, 1.75],
-        "B": 2,
-        "solidity": [0.1, 0.3, 0.5, 0.7],
-        "centerX": 0,
-        "centerY": 0,
-        "Omega": 1.427,
-        "ntheta": 36
-    },
-    "environment": {
-        "Vinf": [6.23, 9.3],
-        "rho": 1.225,
-        "mu": 1.7894e-5
-    },
-    "simulation": {
-        "var_omega_vinf": 1, 
-        "num_turbines": 1,
-        "airfoil": ["naca0012", "naca4412", "naca2412", "naca0022"],
-        "Re": 5000000,
-        "Mach": 0.3,
-        "include_360_deg_effects": false
-    }
-}
+```yaml
+turbine:
+  r: 17.5
+  twist: 0.0
+  delta: 0.0
+  chord:
+    - 0.875
+    - 1.75
+  B: 2
+  solidity:
+    - 0.1
+    - 0.3
+    - 0.5
+    - 0.7
+  centerX: 0
+  centerY: 0
+  Omega: 1.427
+  ntheta: 36
+
+environment:
+  Vinf:
+    - 6.23
+    - 9.3
+  rho: 1.225
+  mu: 1.7894e-5
+
+simulation:
+  var_omega_vinf: 1
+  num_turbines: 1
+  airfoil:
+    - naca0012
+    - naca4412
+    - naca2412
+    - naca0022
+  Re: 5000000
+  Mach: 0.3
+  include_360_deg_effects: false
 ```
 Note that parameters containing braces accept more than one number at a time. This means that when performing the calculations, as many simulations as necessary will be carried out in order to make the greatest number of possible combinations between the selected parameters automatically.
 
