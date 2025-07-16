@@ -8,6 +8,8 @@ from rich import box
 from src.pyvawt.simulation import run_simulation_case
 from src.pyvawt.utils import load_config
 
+# exec command: uv run python3 -m src.pyvawt.main
+
 def run_simulation():
     """
     Runs a batch of aerodynamic simulations for different parameter combinations.

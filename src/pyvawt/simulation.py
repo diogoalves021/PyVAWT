@@ -2,7 +2,7 @@ import numpy as np
 import math
 import os
 import h5py
-import matplotlib
+import csv
 import time
 import traceback
 import copy
@@ -10,13 +10,13 @@ from scipy.integrate import quad
 from scipy.optimize import root
 from typing import Callable, Tuple
 import matplotlib.pyplot as plt
-# matplotlib.use("TkAgg") Define a different interactive backend
+# matplotlib.use('TkAgg') Define a different interactive backend
 from .data_generation import get_cl_cd_neuralfoil
 from .utils import save_config 
 
 # Coefficients of influence
 def panelIntegration(xvec, yvec, thetavec, ifunc):
-    """
+    '''
     Perform panel integration to compute influence coefficients.
 
     This function applies for both Ay and Dx depending on the function passed.
@@ -40,7 +40,7 @@ def panelIntegration(xvec, yvec, thetavec, ifunc):
     A : ndarray
         The result of the integration, with shape (nx, ntheta), where nx is the
         number of panels and ntheta is the number of integration points.
-    """
+    '''
     #Inicializar
     nx = len(xvec)
     ntheta = len(thetavec)
@@ -65,7 +65,7 @@ def panelIntegration(xvec, yvec, thetavec, ifunc):
     return A
 
 def Dxintegrand(x, y, phi):
-    """
+    '''
     Integrand function for computing Dx.
 
     Parameters
@@ -83,7 +83,7 @@ def Dxintegrand(x, y, phi):
     -------
     float
         The value of the integrand at the given point and angle.
-    """
+    '''
     v1 = x + math.sin(phi)
     v2 = y - math.cos(phi)
 
@@ -92,7 +92,7 @@ def Dxintegrand(x, y, phi):
     return (v1 * math.sin(phi) - v2 * math.cos(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
 
 def Ayintegrand(x, y, phi):
-    """
+    '''
     Integrand function for computing Ay.
 
     Parameters
@@ -110,7 +110,7 @@ def Ayintegrand(x, y, phi):
     -------
     float
         The value of the integrand at the given point and angle.
-    """
+    '''
     v1 = x + math.sin(phi)
     v2 = y - math.cos(phi)
     if abs(v1) < 1e-12 and abs(v2) < 1e-12:
@@ -119,7 +119,7 @@ def Ayintegrand(x, y, phi):
     return (v1 * math.cos(phi) + v2 * math.sin(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
 
 def AyIJ(xvec, yvec, thetavec):
-    """
+    '''
     Compute AyIJ by integrating with the Ayintegrand function.
 
     Parameters
@@ -137,11 +137,11 @@ def AyIJ(xvec, yvec, thetavec):
     -------
     Ay : ndarray
         The result of the Ay integration for each panel.
-    """
+    '''
     return panelIntegration(xvec, yvec, thetavec, Ayintegrand)
 
 def DxIJ(xvec, yvec, thetavec):
-    """
+    '''
     Compute DxIJ by integrating with the Dxintegrand function.
 
     Parameters
@@ -159,11 +159,11 @@ def DxIJ(xvec, yvec, thetavec):
     -------
     Dx : ndarray
         The result of the Dx integration for each panel.
-    """
+    '''
     return panelIntegration(xvec, yvec, thetavec, Dxintegrand)
 
 def WxIJ(xvec, yvec, thetavec):
-    """
+    '''
     Compute WxIJ by processing the x and y coordinates to determine influence of panels.
 
     This function initializes a Wx matrix based on the given x and y coordinates 
@@ -184,7 +184,7 @@ def WxIJ(xvec, yvec, thetavec):
     -------
     Wx : ndarray
         The Wx matrix resulting from the panel influence calculations.
-    """
+    '''
     nx = len(xvec)
     ntheta = len(thetavec)
     dtheta = thetavec[1] - thetavec[0] # Assumes equally spaced values
@@ -197,7 +197,7 @@ def WxIJ(xvec, yvec, thetavec):
             and xvec[i]**2 + yvec[i]**2 >= 1.0
         ):
             thetak = np.arccos(yvec[i])
-            k = np.searchsorted(thetavec + dtheta / 2, thetak, side="right")
+            k = np.searchsorted(thetavec + dtheta / 2, thetak, side='right')
             if 0 <= k < ntheta:
                 Wx[i, k] = -1.0
                 Wx[i, ntheta - k - 1] = 1.0
@@ -205,7 +205,7 @@ def WxIJ(xvec, yvec, thetavec):
     return Wx
 
 def DxII(thetavec):
-    """
+    '''
     Compute DxII based on the given angles.
 
     This function initializes a matrix Rx for influence calculations based on 
@@ -220,7 +220,7 @@ def DxII(thetavec):
     -------
     Rx : ndarray
         The DxII matrix resulting from the calculations based on the angles.
-    """
+    '''
     ntheta = len(thetavec)
     dtheta = thetavec[1] - thetavec[0] # Assumes equally spaced values
     Rx = (dtheta / (4 * np.pi)) * np.ones((ntheta, ntheta))
@@ -234,7 +234,7 @@ def DxII(thetavec):
     return Rx
 
 def WxII(thetavec):
-    """
+    '''
     Generate the Wx matrix for a given set of angular divisions.
 
     Parameters
@@ -252,7 +252,7 @@ def WxII(thetavec):
     -----
     The function generates the Wx matrix for a set of angles, where half of the 
     matrix is filled with `-1` values and the other half with `1` values.
-    """
+    '''
     ntheta = len(thetavec)
     Wx = np.zeros((ntheta, ntheta))
 
@@ -262,7 +262,7 @@ def WxII(thetavec):
     return Wx
 
 def precomputeMatrices(ntheta, modulepath):
-    """
+    '''
     Precompute matrices for self-influence and save them in an HDF5 file.
 
     Parameters
@@ -281,7 +281,7 @@ def precomputeMatrices(ntheta, modulepath):
     -----
     The function computes the self-influence matrices for Dx, Wx, and Ay, 
     then stores them in an HDF5 file for future use.
-    """
+    '''
     dtheta = 2 * np.pi / ntheta
     theta = np.arange(dtheta / 2, 2 * np.pi, dtheta)
 
@@ -292,15 +292,15 @@ def precomputeMatrices(ntheta, modulepath):
 
     filepath = f'{modulepath}/theta-{ntheta}.h5'
     with h5py.File(filepath, 'w') as file:
-        file.create_dataset("theta", data=theta)
-        file.create_dataset("Dx", data=Dxself)
-        file.create_dataset("Wx", data=Wxself)
-        file.create_dataset("Ay", data=Ayself)
+        file.create_dataset('theta', data=theta)
+        file.create_dataset('Dx', data=Dxself)
+        file.create_dataset('Wx', data=Wxself)
+        file.create_dataset('Ay', data=Ayself)
 
     return filepath
 
 def matrixAssemble(centerX, centerY, radius, ntheta):
-    """
+    '''
     Assemble the influence matrices for a single VAWT turbine based on 
     its center coordinates, radius, and number of angular discretization points.
 
@@ -329,8 +329,8 @@ def matrixAssemble(centerX, centerY, radius, ntheta):
     This function is tailored for simulations involving a single vertical-axis wind turbine (VAWT).
     It loads precomputed influence matrices (Dx, Wx, Ay) for a turbine with the given angular resolution,
     avoiding the need for pairwise interaction calculations present in multi-turbine simulations.
-    """
-    file = f"theta-{ntheta}.h5"
+    '''
+    file = f'theta-{ntheta}.h5'
     modulepath = os.getcwd() # uses the current directory as the path
     if not os.path.isfile(file):
         filepath = precomputeMatrices(ntheta, modulepath)
@@ -359,7 +359,7 @@ def matrixAssemble(centerX, centerY, radius, ntheta):
 #-------- Force coeffients --------
 
 class Turbine:
-    """
+    '''
     Class representing a vertical-axis wind turbine (VAWT).
 
     Parameters
@@ -376,7 +376,7 @@ class Turbine:
         Number of blades.
     Omega : float
         Rotational speed of the turbine [rad/s].
-    """
+    '''
     def __init__(self, r: float, chord: float, twist: float, delta: float, B: int, Omega: float, centerX: float, centerY: float):
         self.r = r
         self.chord = chord
@@ -388,7 +388,7 @@ class Turbine:
         self.centerY = centerY
 
 class Environment:
-    """
+    '''
     Class representing the wind and fluid properties of the environment.
 
     Parameters
@@ -399,14 +399,14 @@ class Environment:
         Air density [kg/m^3].
     mu : float
         Dynamic viscosity of the air [Pa·s].
-    """
+    '''
     def __init__(self, Vinf: float, rho: float, mu: float):
         self.Vinf = Vinf
         self.rho = rho
         self.mu = mu
 
 def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config, turbine_index, airfoil_index):
-    """
+    '''
     Calculates aerodynamic forces and performance coefficients for a VAWT using the actuator cylinder method.
 
     Parameters
@@ -444,7 +444,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     Two correction models are available for calculating the correction factor `ka`.
     The active model is based on a piecewise analytical expression depending on `CT`.
     An alternative model based on a fitted polynomial is also provided but commented out.
-    """
+    '''
     # Unpacking turbine and environment parameters
     r = turbine.r              # Rotor radius
     chord = turbine.chord      # Blade chord length
@@ -532,7 +532,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
 #-------- solve the system --------
 
 def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index):
-    """
+    '''
     Compute the residual for the actuator-cylinder equations of a single VAWT.
 
     Parameters
@@ -558,7 +558,7 @@ def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index):
     -------
     ndarray of shape (2*ntheta,)
         Residual vector: (A @ q) * k_mult - w.
-    """
+    '''
     # Initial configuration
     ntheta = len(theta)
 
@@ -575,7 +575,7 @@ def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index):
     return (A @ q) * kmult - w
 
 def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index):
-    """
+    '''
     Solve the actuator-cylinder model for a single VAWT turbine.
 
     Parameters
@@ -607,7 +607,7 @@ def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index)
         Radial positions corresponding to the computed forces.
     theta : ndarray of shape (ntheta,)
         Angular discretization points (radians).
-    """
+    '''
     # Set turbine geometry
     centerX = turbine.centerX
     centerY = turbine.centerY
@@ -631,7 +631,7 @@ def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index)
     return CT, CP, Rp, Tp, Zp, theta
 
 def get_radius_from_config(turbine_config: dict) -> float:
-    """
+    '''
     Computes the rotor radius of a vertical-axis wind turbine based on the configuration.
 
     The radius can be defined in two ways:
@@ -657,32 +657,32 @@ def get_radius_from_config(turbine_config: dict) -> float:
     ------
     ValueError
         If required parameters are missing or if an invalid mode is specified.
-    """
-    mode = turbine_config.get("radius_mode", "manual")
+    '''
+    mode = turbine_config.get('radius_mode', 'manual')
 
-    if mode == "manual":
-        r = turbine_config.get("r", None)
+    if mode == 'manual':
+        r = turbine_config.get('r', None)
         if r is None:
             raise ValueError("Mode 'manual' selected, but 'r' was not provided.")
         return r
 
-    elif mode == "auto":
-        H = turbine_config.get("H", None)
+    elif mode == 'auto':
+        H = turbine_config.get('H', None)
         if H is None:
             raise ValueError("Mode 'auto' selected, but 'H' was not provided.")
-        B = turbine_config.get("B")
-        chord = turbine_config.get("chord")
-        solidity = turbine_config.get("solidity")
+        B = turbine_config.get('B')
+        chord = turbine_config.get('chord')
+        solidity = turbine_config.get('solidity')
         if None in (B, chord, solidity):
-            raise ValueError("Missing parameters for automatic radius calculation.")
+            raise ValueError('Missing parameters for automatic radius calculation.')
         return (B * chord) / (solidity * H)
 
     else:
-        raise ValueError(f"Invalid radius mode: {mode}. Use 'manual' or 'auto'.")
+        raise ValueError(f'Invalid radius mode: {mode}. Use "manual" or "auto".')
 
 
 def initialize_turbine_and_environment(config):
-    """
+    '''
     Initializes the turbine and environment objects based on the configuration file.
 
     Parameters
@@ -711,27 +711,27 @@ def initialize_turbine_and_environment(config):
     -----
     The function also reads airfoil data using the `readaerodyn_neuralfoil` function
     and uses it to initialize the turbine's aerodynamic properties.
-    """
-    turbine_params = config["turbine"]
-    environment_params = config["environment"]
-    simulation_params = config["simulation"]
+    '''
+    turbine_params = config['turbine']
+    environment_params = config['environment']
+    simulation_params = config['simulation']
 
     r = get_radius_from_config(turbine_params)
-    config["turbine"]["r"] = r
+    config['turbine']['r'] = r
 
-    twist = turbine_params["twist"]
-    delta = turbine_params["delta"]
-    chord = turbine_params["chord"]
-    B = turbine_params["B"]
-    solidity = turbine_params["solidity"]
-    centerX = turbine_params["centerX"]
-    centerY = turbine_params["centerY"]
-    Omega = turbine_params["Omega"]
-    ntheta = turbine_params["ntheta"]
+    twist = turbine_params['twist']
+    delta = turbine_params['delta']
+    chord = turbine_params['chord']
+    B = turbine_params['B']
+    solidity = turbine_params['solidity']
+    centerX = turbine_params['centerX']
+    centerY = turbine_params['centerY']
+    Omega = turbine_params['Omega']
+    ntheta = turbine_params['ntheta']
 
-    Vinf = environment_params["Vinf"]
-    rho = environment_params["rho"]
-    mu = environment_params["mu"]
+    Vinf = environment_params['Vinf']
+    rho = environment_params['rho']
+    mu = environment_params['mu']
 
     turbine = Turbine(r, chord, twist, delta, B, Omega, centerX, centerY)
     env = Environment(Vinf, rho, mu)
@@ -739,7 +739,7 @@ def initialize_turbine_and_environment(config):
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
 def run_simulation_case(params, base_config):
-    """
+    '''
     Runs a single aerodynamic simulation case based on the provided parameters.
 
     Parameters
@@ -773,34 +773,56 @@ def run_simulation_case(params, base_config):
       and stores results including a .dat file and a Cp vs TSR plot.
     - Assumes the use of 1 turbine for now.
     - Results are saved in a subdirectory of 'src/results/temporary_results'.
-    """
+    '''
     airfoil_index, turbine_index, chord, solidity, vinf = params
     config = copy.deepcopy(base_config)  # Deep copy
 
-    airfoil_name = config["simulation"]["airfoil"][airfoil_index]
-    config["simulation"]["airfoil"] = airfoil_name
-    config["turbine"]["chord"] = chord
-    config["turbine"]["solidity"] = solidity
-    config["environment"]["Vinf"] = vinf
-    angular_velocity = config["turbine"]["Omega"]
+    output_cfg = config.get("output", {})
+    save_results = output_cfg.get("save", True)
+    save_config_used = output_cfg.get("save_config", True)
+    save_plot = output_cfg.get("save_plot", True)
+
+    data_cfg = output_cfg.get("data_file", {})
+    data_format = data_cfg.get("format", "dat")
+    include_header = data_cfg.get("include_header", True)
+
+    plot_cfg = output_cfg.get("plot_image", {})
+    image_format = plot_cfg.get("format", "png")
+    dpi = plot_cfg.get("dpi", 300)
+
+    airfoil_name = config['simulation']['airfoil'][airfoil_index]
+    config['simulation']['airfoil'] = airfoil_name
+    config['turbine']['chord'] = chord
+    config['turbine']['solidity'] = solidity
+    config['environment']['Vinf'] = vinf
+    angular_velocity = config['turbine']['Omega']
+    delta = config['turbine']['delta']
+    r = config['turbine']['r']
+
+    def fmt(val):
+        return str(val).replace('.', 'p')
 
     folder_name = (
-        f"{airfoil_name}_ch{chord}_sol{solidity}_vinf{vinf}".replace(".", "p")
+        f'{airfoil_name}_ch{fmt(chord)}_sol{fmt(solidity)}_vinf{fmt(vinf)}'
+        f'_delta{fmt(delta)}_r{fmt(r)}'
     )
-    result_dir = os.path.join("src/results/temporary_results", folder_name)
-    os.makedirs(result_dir, exist_ok=True)
-    save_config(config, os.path.join(result_dir, "config_used.yaml"))
+    result_dir = os.path.join('src/results/temporary_results', folder_name)
+    config["output"]["result_folder"] = folder_name
 
-    turbine, env, sim_params, _, _, _, ntheta = initialize_turbine_and_environment(
-        config
-    )
-    r = config["turbine"]["r"]
-    var_omega_vinf = sim_params["var_omega_vinf"]
-    num_turbines = sim_params["num_turbines"]
+    if save_results or save_config_used or save_plot:
+        os.makedirs(result_dir, exist_ok=True)
+
+    if save_config_used:
+        save_config(config, os.path.join(result_dir, 'config_used.yaml'))
+
+
+    turbine, env, sim_params, _, _, _, ntheta = initialize_turbine_and_environment(config)
+    var_omega_vinf = sim_params['var_omega_vinf']
+    num_turbines = sim_params['num_turbines']
 
     start_time = time.time()
     try:
-        print(f"Simulating: {folder_name}")
+        print(f'Simulating: {folder_name}')
         n = 20
         tsrvec = np.linspace(1, 7, n)
         CPvec = np.zeros(n)
@@ -839,43 +861,52 @@ def run_simulation_case(params, base_config):
                 )
 
         else:
-            raise ValueError("var_omega_vinf inválido.")
+            raise ValueError('var_omega_vinf inválido.')
 
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
-        header = "TSR\tCP\tCT\tRp\tTp\tZp"
-        np.savetxt(
-            os.path.join(result_dir, f"results_{airfoil_name}.dat"),
-            data_to_save,
-            header=header,
-            fmt="%.6f",
-            delimiter="\t",
-        )
+        header = 'TSR\tCP\tCT\tRp\tTp\tZp'
+        if save_results:
+            filename = f"results_{airfoil_name}.{data_format}"
+            filepath = os.path.join(result_dir, filename)
+
+            if data_format == "dat":
+                np.savetxt(filepath, data_to_save, header=header if include_header else "", fmt="%.6f", delimiter="\t")
+            elif data_format == "csv":
+                with open(filepath, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    if include_header:
+                        writer.writerow(header.split('\t'))
+                    writer.writerows(data_to_save.tolist())
+
 
         plt.figure()
         plt.plot(tsrvec, CPvec)
-        plt.title(f"$C_p$ x TSR - {airfoil_name}")
-        plt.xlabel("TSR")
-        plt.ylabel("$C_p$")
+        plt.title(f'$C_p$ x TSR - {airfoil_name}')
+        plt.xlabel('TSR')
+        plt.ylabel('$C_p$')
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig(os.path.join(result_dir, f"cp_curve_{airfoil_name}.png"))
+        if save_plot:
+            plot_filename = f"cp_curve_{airfoil_name}.{image_format}"
+            plt.savefig(os.path.join(result_dir, plot_filename), format=image_format, dpi=dpi)
+
         plt.close()
 
         elapsed = time.time() - start_time
-        return {"name": folder_name, "status": "OK", "time_sec": round(elapsed, 2)}
+        return {'name': folder_name, 'status': 'OK', 'time_sec': round(elapsed, 2)}
 
     except Exception as e:
         return {
-            "name": folder_name,
-            "status": f"ERROR: {e}",
-            "time_sec": round(time.time() - start_time, 2),
-            "traceback": traceback.format_exc(limit=2),
+            'name': folder_name,
+            'status': f'ERROR: {e}',
+            'time_sec': round(time.time() - start_time, 2),
+            'traceback': traceback.format_exc(limit=2),
         }
 
 # ======== Auxiliary Methods =========
 
 def trapz(x, y):
-    """
+    '''
     Computes the integral of a function using the trapezoidal rule.
 
     Parameters
@@ -889,14 +920,14 @@ def trapz(x, y):
     -------
     float
         The computed integral of the function using the trapezoidal rule.
-    """
+    '''
     integral = 0.0
     for i in range(len(x) - 1):
         integral += (x[i+1] - x[i]) * 0.5 * (y[i] + y[i+1])
     return integral
 
 def pInt(theta, f):
-    """
+    '''
     Computes the integral of a periodic function using the trapezoidal rule, considering periodic boundary conditions.
 
     Parameters
@@ -910,7 +941,7 @@ def pInt(theta, f):
     -------
     float
         The computed integral, including the periodic boundary contribution.
-    """
+    '''
     # Compute the integral using the trapezoidal rule
     integral = trapz(theta, f)
 

@@ -26,3 +26,17 @@ simulation:
     Re: 200000
     Mach: 0.3
     include_360_deg_effects: false
+
+output:
+  save: true               # Salvar arquivos de resultado?
+  save_config: true        # Salvar config usado na simulação?
+  save_plot: true          # Gerar imagem da curva Cp x TSR?
+
+  data_file:
+    format: "dat"          # "dat" (científico) ou "csv" (Excel)
+    include_header: true   # Cabeçalho com nomes das colunas?
+
+  plot_image:
+    format: "png"          # "png" (rápido) ou "eps" (artigos)
+    dpi: 300               # Qualidade da imagem (dpi)
+

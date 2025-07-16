@@ -58,4 +58,4 @@ def save_config(config, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     with open(path, 'w') as f:
-        yaml.dump(config, f, sort_keys=False, indent=4)
+        yaml.dump(config, f, sort_keys=False)
