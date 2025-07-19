@@ -10,7 +10,6 @@ from scipy.integrate import quad
 from scipy.optimize import root
 from typing import Callable, Tuple
 import matplotlib.pyplot as plt
-# matplotlib.use('TkAgg') Define a different interactive backend
 from .data_generation import get_cl_cd_neuralfoil
 from .utils import save_config 
 
@@ -663,7 +662,7 @@ def get_radius_from_config(turbine_config: dict) -> float:
     if mode == 'manual':
         r = turbine_config.get('r', None)
         if r is None:
-            raise ValueError("Mode 'manual' selected, but 'r' was not provided.")
+            raise ValueError('Mode 'manual' selected, but 'r' was not provided.')
         return r
 
     elif mode == 'auto':
@@ -777,18 +776,18 @@ def run_simulation_case(params, base_config):
     airfoil_index, turbine_index, chord, solidity, vinf = params
     config = copy.deepcopy(base_config)  # Deep copy
 
-    output_cfg = config.get("output", {})
-    save_results = output_cfg.get("save", True)
-    save_config_used = output_cfg.get("save_config", True)
-    save_plot = output_cfg.get("save_plot", True)
+    output_cfg = config.get('output', {})
+    save_results = output_cfg.get('save', True)
+    save_config_used = output_cfg.get('save_config', True)
+    save_plot = output_cfg.get('save_plot', True)
 
-    data_cfg = output_cfg.get("data_file", {})
-    data_format = data_cfg.get("format", "dat")
-    include_header = data_cfg.get("include_header", True)
+    data_cfg = output_cfg.get('data_file', {})
+    data_format = data_cfg.get('format', 'dat')
+    include_header = data_cfg.get('include_header', True)
 
-    plot_cfg = output_cfg.get("plot_image", {})
-    image_format = plot_cfg.get("format", "png")
-    dpi = plot_cfg.get("dpi", 300)
+    plot_cfg = output_cfg.get('plot_image', {})
+    image_format = plot_cfg.get('format', 'png')
+    dpi = plot_cfg.get('dpi', 300)
 
     airfoil_name = config['simulation']['airfoil'][airfoil_index]
     config['simulation']['airfoil'] = airfoil_name
@@ -807,7 +806,7 @@ def run_simulation_case(params, base_config):
         f'_delta{fmt(delta)}_r{fmt(r)}'
     )
     result_dir = os.path.join('src/results/temporary_results', folder_name)
-    config["output"]["result_folder"] = folder_name
+    config['output']['result_folder'] = folder_name
 
     if save_results or save_config_used or save_plot:
         os.makedirs(result_dir, exist_ok=True)
@@ -866,13 +865,13 @@ def run_simulation_case(params, base_config):
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
         header = 'TSR\tCP\tCT\tRp\tTp\tZp'
         if save_results:
-            filename = f"results_{airfoil_name}.{data_format}"
+            filename = f'results_{airfoil_name}.{data_format}'
             filepath = os.path.join(result_dir, filename)
 
-            if data_format == "dat":
-                np.savetxt(filepath, data_to_save, header=header if include_header else "", fmt="%.6f", delimiter="\t")
-            elif data_format == "csv":
-                with open(filepath, "w", newline="") as f:
+            if data_format == 'dat':
+                np.savetxt(filepath, data_to_save, header=header if include_header else '', fmt='%.6f', delimiter='\t')
+            elif data_format == 'csv':
+                with open(filepath, 'w', newline='') as f:
                     writer = csv.writer(f)
                     if include_header:
                         writer.writerow(header.split('\t'))
@@ -887,7 +886,7 @@ def run_simulation_case(params, base_config):
         plt.grid(True)
         plt.tight_layout()
         if save_plot:
-            plot_filename = f"cp_curve_{airfoil_name}.{image_format}"
+            plot_filename = f'cp_curve_{airfoil_name}.{image_format}'
             plt.savefig(os.path.join(result_dir, plot_filename), format=image_format, dpi=dpi)
 
         plt.close()

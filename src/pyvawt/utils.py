@@ -2,7 +2,7 @@ import yaml
 import os
 
 def load_config(path='src/pyvawt/config/config.yaml'):
-    """
+    '''
     Loads the simulation configuration from a YAML file and returns it as a dictionary.
 
     Parameters
@@ -22,18 +22,18 @@ def load_config(path='src/pyvawt/config/config.yaml'):
         If the specified file does not exist.
     yaml.YAMLError
         If there is an error parsing the YAML file.
-    """
+    '''
     if not os.path.isfile(path):
-        raise FileNotFoundError(f"Configuration file not found: {path}")
+        raise FileNotFoundError(f'Configuration file not found: {path}')
     
     try:
         with open(path, 'r') as f:
             return yaml.safe_load(f)
     except yaml.YAMLError as e:
-        raise yaml.YAMLError(f"Error parsing YAML file {path}:\n{e}")
+        raise yaml.YAMLError(f'Error parsing YAML file {path}:\n{e}')
 
 def save_config(config, path):
-    """
+    '''
     Saves a configuration dictionary to a YAML file.
 
     Parameters
@@ -51,9 +51,9 @@ def save_config(config, path):
     - Creates directories as needed.
     - Forces the file extension to .yaml if not present.
     - Uses indentation for human-readable output.
-    """
-    if not path.endswith(".yaml"):
-        path += ".yaml"
+    '''
+    if not path.endswith('.yaml'):
+        path += '.yaml'
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
 

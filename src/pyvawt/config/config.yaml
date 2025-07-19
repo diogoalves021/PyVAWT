@@ -28,15 +28,15 @@ simulation:
     include_360_deg_effects: false
 
 output:
-  save: true               # Salvar arquivos de resultado?
-  save_config: true        # Salvar config usado na simulação?
-  save_plot: true          # Gerar imagem da curva Cp x TSR?
+  save: true               
+  save_config: true        
+  save_plot: true          
 
   data_file:
-    format: "dat"          # "dat" (científico) ou "csv" (Excel)
-    include_header: true   # Cabeçalho com nomes das colunas?
+    format: "dat"          # "dat" or "csv"
+    include_header: true   
 
   plot_image:
-    format: "png"          # "png" (rápido) ou "eps" (artigos)
-    dpi: 300               # Qualidade da imagem (dpi)
+    format: "png"          # "png" or "eps"
+    dpi: 300               
 
