@@ -662,7 +662,7 @@ def get_radius_from_config(turbine_config: dict) -> float:
     if mode == 'manual':
         r = turbine_config.get('r', None)
         if r is None:
-            raise ValueError('Mode 'manual' selected, but 'r' was not provided.')
+            raise ValueError("Mode 'manual' selected, but 'r' was not provided.")
         return r
 
     elif mode == 'auto':
