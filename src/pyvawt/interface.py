@@ -1,10 +1,10 @@
 import tkinter as tk
-from tkinter import ttk
+import ttkbootstrap as ttk 
 
-
-window = tk.Tk()
+window = ttk.Window(themename= 'darkly')
 window.title('PyVAWT')
-window.geometry('600x600')
+window.geometry('700x600')
+window.minsize('420','600')
 
 # Frames
 
@@ -15,7 +15,7 @@ turbine_config = ttk.Frame(window)
 turbine_config.pack()
 
 radio_buttons_frame = ttk.Frame(window)
-radio_buttons_frame.pack()
+radio_buttons_frame.pack(pady=20)
 
 bottom_frame = ttk.Frame(window)
 bottom_frame.pack()
@@ -42,6 +42,11 @@ def run_from_gui():
     config['simulation']['airfoil'] = [airfoil_var.get()]
     config['simulation']['num_turbines'] = 1
     config['simulation']['var_omega_vinf'] = 1
+
+    config['simulation']['fixed_parameter'] = fixed_param_var.get()
+    config['output']['save'] = bool(save_check_var.get())
+    config['output']['save_config'] = bool(save_config_var.get())
+    config['output']['save_plot'] = bool(save_plot_var.get())
 
     temp_path = 'src/pyvawt/config/gui_config.yaml'
     save_config(config, temp_path)
@@ -131,19 +136,36 @@ airfoil_entry.grid(row=11, column=1, padx=5, pady=5)
 
 # Radio frame buttons
 
-var_vel_check = ttk.Checkbutton(radio_buttons_frame, text='Var Omega')
-var_vel_check.grid(row=1, column=0, padx=5, pady=5)
+fixed_param_var = tk.StringVar(value='omega')
+omega_radio = ttk.Radiobutton(radio_buttons_frame, text='Fix Omega', variable=fixed_param_var, value='omega')
+omega_radio.grid(row=1, column=0, padx=10)
 
-save_check = ttk.Checkbutton(radio_buttons_frame, text='Save')
-save_check.grid(row=1, column=1, padx=5, pady=5)
+vinf_radio = ttk.Radiobutton(radio_buttons_frame, text='Fix Vinf', variable=fixed_param_var, value='vinf')
+vinf_radio.grid(row=1, column=1, padx=10)
 
-save_config_check = ttk.Checkbutton(radio_buttons_frame, text='Save config')
-save_config_check.grid(row=1, column=2, padx=5, pady=5)
+#var_vel_var = tk.BooleanVar()
+#var_vel_check = ttk.Checkbutton(radio_buttons_frame, text='Var Omega', variable=var_vel_var)
+#var_vel_check.grid(row=1, column=0, padx=12, pady=10)
 
-save_plot_check = ttk.Checkbutton(radio_buttons_frame, text='Save plot')
-save_plot_check.grid(row=1, column=3, padx=5, pady=5)
+save_check_var = tk.BooleanVar()
+save_check = ttk.Checkbutton(radio_buttons_frame, text='Export data (.dat / .csv) ', variable=save_check_var)
+save_check.grid(row=1, column=2, padx=12, pady=10)
 
-run_sim_button = ttk.Button(bottom_frame, text='Run simulation', command=run_from_gui)
+save_config_var = tk.BooleanVar()
+save_config_check = ttk.Checkbutton(radio_buttons_frame, text='Save simulations settings', variable=save_config_var)
+save_config_check.grid(row=1, column=3, padx=12, pady=10)
+
+save_plot_var = tk.BooleanVar()
+save_plot_check = ttk.Checkbutton(radio_buttons_frame, text='Save cp x tsr plot', variable=save_plot_var)
+save_plot_check.grid(row=1, column=4, padx=12, pady=10)
+
+run_sim_button = ttk.Button(
+    bottom_frame,
+    text='Run simulation',
+    command=run_from_gui,
+    width=30,
+    padding=10,
+    )
 run_sim_button.pack()
 
 params = r_var, H_var, twist_var, delta_var, chord_var, B_var, sol_var, omega_var, ntheta_var, vinf_var, airfoil_var

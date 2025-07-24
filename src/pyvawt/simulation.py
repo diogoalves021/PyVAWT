@@ -739,39 +739,49 @@ def initialize_turbine_and_environment(config):
 
 def run_simulation_case(params, base_config):
     '''
-    Runs a single aerodynamic simulation case based on the provided parameters.
+    Executes a single aerodynamic simulation for a vertical-axis wind turbine (VAWT)
+    using the provided parameters and base configuration.
 
     Parameters
     ----------
     params : tuple
-        A tuple containing the parameters:
-        - airfoil : str
-            Name of the airfoil profile.
+        A tuple containing the following:
+        - airfoil_index : int
+            Index of the airfoil name in the airfoil list from the configuration.
+        - turbine_index : int
+            Index of the turbine (reserved for future multi-turbine support).
         - chord : float
-            Chord length of the blade (in meters).
+            Blade chord length in meters.
         - solidity : float
-            Solidity of the turbine.
+            Turbine solidity (dimensionless).
         - vinf : float
-            Freestream wind velocity (in m/s).
+            Freestream wind velocity in m/s.
+
+    base_config : dict
+        Base configuration dictionary loaded from YAML, containing all simulation settings.
 
     Returns
     -------
     dict
-        Dictionary summarizing the result of the simulation. Contains:
+        Dictionary containing the following keys:
         - 'name' : str
-            Folder name used to store the results.
-        - 'airfoil', 'chord', 'solidity', 'vinf' : input parameters
+            Name of the folder used to save results.
         - 'status' : str
-            'OK' if successful, or error message if failed.
+            'OK' if successful, or an error message otherwise.
         - 'time_sec' : float
             Duration of the simulation in seconds.
+        - 'traceback' : str, optional
+            Traceback info included if the simulation fails.
 
     Notes
     -----
-    - The function initializes a turbine and environment, runs simulations across a TSR range,
-      and stores results including a .dat file and a Cp vs TSR plot.
-    - Assumes the use of 1 turbine for now.
-    - Results are saved in a subdirectory of 'src/results/temporary_results'.
+    - The simulation evaluates turbine performance across a range of TSR (Tip-Speed Ratio).
+    - The parameter `fixed_parameter` in the config determines which quantity is held constant:
+        * 'vinf': wind speed is fixed, Omega is varied.
+        * 'omega': angular velocity is fixed, wind speed is varied.
+    - Simulation results include thrust/torque/power coefficients, optionally saved as .dat/.csv and plots.
+    - Output files are saved to: src/results/temporary_results/<case_name>
+    - Designed for batch processing; assumes one turbine per run.
     '''
     airfoil_index, turbine_index, chord, solidity, vinf = params
     config = copy.deepcopy(base_config)  # Deep copy
@@ -816,7 +826,7 @@ def run_simulation_case(params, base_config):
 
 
     turbine, env, sim_params, _, _, _, ntheta = initialize_turbine_and_environment(config)
-    var_omega_vinf = sim_params['var_omega_vinf']
+    fixed_parameter = sim_params['fixed_parameter']
     num_turbines = sim_params['num_turbines']
 
     start_time = time.time()
@@ -830,7 +840,8 @@ def run_simulation_case(params, base_config):
         Tpvec = np.zeros(n)
         Zpvec = np.zeros(n)
 
-        if var_omega_vinf == 0:
+        if fixed_parameter == 'vinf':
+            # Vinf is fixed thus omega is not constant for each tsr
             for i, tsr in enumerate(tsrvec):
                 turbine.Omega = vinf * tsr / r
                 CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
@@ -844,7 +855,8 @@ def run_simulation_case(params, base_config):
                     Zp[0],
                 )
 
-        elif var_omega_vinf == 1:
+        elif fixed_parameter == 'omega':
+            # Omega is fixed thus vinf is not constant for each tsr
             for i, tsr in enumerate(tsrvec):
                 turbine.Omega = angular_velocity
                 env.Vinf = turbine.Omega * r / tsr
@@ -860,7 +872,7 @@ def run_simulation_case(params, base_config):
                 )
 
         else:
-            raise ValueError('var_omega_vinf inválido.')
+            raise ValueError("Invalid value for 'fixed_parameter'. Use 'vinf' or 'omega'.")
 
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
         header = 'TSR\tCP\tCT\tRp\tTp\tZp'

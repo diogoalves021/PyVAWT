@@ -19,7 +19,7 @@ environment:
     rho: 1.225
     mu: 1.7894e-05
 simulation:
-    var_omega_vinf: 1
+    fixed_parameter: omega    # "omega" or "vinf"
     num_turbines: 1
     airfoil:
     - naca0021
