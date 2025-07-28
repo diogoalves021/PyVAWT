@@ -1,5 +1,5 @@
 turbine:
-  radius_mode: manual
+  radius_mode: auto
   r: 3.0
   H: 1.0
   twist: 0.0
@@ -11,24 +11,24 @@ turbine:
   - 0.125
   centerX: 0
   centerY: 0
-  Omega: 5.03
+  Omega: 19.03
   ntheta: 36
 environment:
   Vinf:
-  - 5.03
+  - 5.0
   rho: 1.225
   mu: 1.7894e-05
 simulation:
   fixed_parameter: omega
   num_turbines: 1
   airfoil:
-  - naca0021
+  - naca0019
   Re: 200000
   Mach: 0.3
   include_360_deg_effects: false
   var_omega_vinf: 1
 output:
-  save: true
+  save: false
   save_config: false
   save_plot: false
   data_file:

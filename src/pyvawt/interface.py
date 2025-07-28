@@ -1,9 +1,11 @@
 import tkinter as tk
-import ttkbootstrap as ttk 
+import ttkbootstrap as ttk
+import threading
+import time
 
 window = ttk.Window(themename= 'darkly')
 window.title('PyVAWT')
-window.geometry('700x600')
+window.geometry('800x700')
 window.minsize('420','600')
 
 # Frames
@@ -15,7 +17,10 @@ turbine_config = ttk.Frame(window)
 turbine_config.pack()
 
 radio_buttons_frame = ttk.Frame(window)
-radio_buttons_frame.pack(pady=20)
+radio_buttons_frame.pack(pady=10)
+
+second_buttons_frame = ttk.Frame(window)
+second_buttons_frame.pack(pady=20)
 
 bottom_frame = ttk.Frame(window)
 bottom_frame.pack()
@@ -28,6 +33,7 @@ def run_from_gui():
 
     config = load_config()
 
+    config['turbine']['radius_mode'] = str(radius_mode_var.get())
     config['turbine']['r'] = float(r_var.get())
     config['turbine']['H'] = float(H_var.get())
     config['turbine']['twist'] = float(twist_var.get())
@@ -47,8 +53,9 @@ def run_from_gui():
     config['output']['save'] = bool(save_check_var.get())
     config['output']['save_config'] = bool(save_config_var.get())
     config['output']['save_plot'] = bool(save_plot_var.get())
+    config['output']['data_file']['format'] = str(file_format_var.get())
 
-    temp_path = 'src/pyvawt/config/gui_config.yaml'
+    temp_path = 'src/pyvawt/config/config.yaml'
     save_config(config, temp_path)
 
     run_simulation()
@@ -143,21 +150,43 @@ omega_radio.grid(row=1, column=0, padx=10)
 vinf_radio = ttk.Radiobutton(radio_buttons_frame, text='Fix Vinf', variable=fixed_param_var, value='vinf')
 vinf_radio.grid(row=1, column=1, padx=10)
 
-#var_vel_var = tk.BooleanVar()
-#var_vel_check = ttk.Checkbutton(radio_buttons_frame, text='Var Omega', variable=var_vel_var)
-#var_vel_check.grid(row=1, column=0, padx=12, pady=10)
+radius_mode_var = tk.StringVar()
+auto_radius_radio = ttk.Radiobutton(second_buttons_frame,
+                                    text='Automatic radius',
+                                    variable=radius_mode_var,
+                                    value='auto')
+auto_radius_radio.grid(row=1, column=0, padx=10)
+
+manual_radius_radio = ttk.Radiobutton(second_buttons_frame,
+                                     text='Manual radius',
+                                     variable=radius_mode_var,
+                                     value='manual')
+manual_radius_radio.grid(row=1, column=1, padx=10)
+
+file_format_var = tk.StringVar()
+csv_format = ttk.Radiobutton(second_buttons_frame,
+                             text='CSV',
+                             variable=file_format_var,
+                             value='csv')
+csv_format.grid(row=1, column=2, padx=10)
+
+dat_format = ttk.Radiobutton(second_buttons_frame,
+                             text='Dat',
+                             variable=file_format_var,
+                             value='dat')
+dat_format.grid(row=1, column=3, padx=10)
 
 save_check_var = tk.BooleanVar()
 save_check = ttk.Checkbutton(radio_buttons_frame, text='Export data (.dat / .csv) ', variable=save_check_var)
-save_check.grid(row=1, column=2, padx=12, pady=10)
+save_check.grid(row=1, column=3, padx=12, pady=10)
 
 save_config_var = tk.BooleanVar()
 save_config_check = ttk.Checkbutton(radio_buttons_frame, text='Save simulations settings', variable=save_config_var)
-save_config_check.grid(row=1, column=3, padx=12, pady=10)
+save_config_check.grid(row=1, column=4, padx=12, pady=10)
 
 save_plot_var = tk.BooleanVar()
 save_plot_check = ttk.Checkbutton(radio_buttons_frame, text='Save cp x tsr plot', variable=save_plot_var)
-save_plot_check.grid(row=1, column=4, padx=12, pady=10)
+save_plot_check.grid(row=1, column=5, padx=12, pady=10)
 
 run_sim_button = ttk.Button(
     bottom_frame,
@@ -169,6 +198,47 @@ run_sim_button = ttk.Button(
 run_sim_button.pack()
 
 params = r_var, H_var, twist_var, delta_var, chord_var, B_var, sol_var, omega_var, ntheta_var, vinf_var, airfoil_var
+
+# Elementos visuais de progresso
+progress_bar = ttk.Progressbar(bottom_frame, mode='indeterminate', length=200)
+progress_bar.pack(pady=10)
+
+status_label = ttk.Label(bottom_frame, text='Status: Aguardando...', font=('Arial', 10))
+status_label.pack()
+
+# Variáveis de controle
+start_time = 0
+running = False
+
+def update_timer():
+    if running:
+        elapsed = time.time() - start_time
+        status_label.config(text=f"Simulação em andamento... Tempo: {elapsed:.1f}s")
+        window.after(1000, update_timer)
+
+def threaded_run():
+    global running, start_time
+    try:
+        progress_bar.start(10)
+        running = True
+        start_time = time.time()
+        update_timer()
+        run_from_gui()
+        status_label.config(text="✅ Simulação concluída.")
+    except Exception as e:
+        status_label.config(text=f"❌ Erro: {str(e)}")
+    finally:
+        running = False
+        progress_bar.stop()
+        run_sim_button.config(state='normal')
+
+def start_simulation():
+    run_sim_button.config(state='disabled')
+    status_label.config(text="Iniciando simulação...")
+    threading.Thread(target=threaded_run, daemon=True).start()
+
+# Troca o comando do botão
+run_sim_button.config(command=start_simulation)
 
 # run
 window.mainloop()
