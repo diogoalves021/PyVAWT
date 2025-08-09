@@ -913,7 +913,7 @@ def run_simulation_case(params, base_config):
             'time_sec': round(time.time() - start_time, 2),
             'traceback': traceback.format_exc(limit=2),
         }
-
+    
 # ======== Auxiliary Methods =========
 
 def trapz(x, y):

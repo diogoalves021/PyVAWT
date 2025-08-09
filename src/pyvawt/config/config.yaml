@@ -1,5 +1,5 @@
 turbine:
-  radius_mode: ''
+  radius_mode: manual
   r: 3.0
   H: 1.0
   twist: 0.0
@@ -28,11 +28,11 @@ simulation:
   include_360_deg_effects: false
   var_omega_vinf: 1
 output:
-  save: false
-  save_config: false
-  save_plot: false
+  save: true
+  save_config: true
+  save_plot: true
   data_file:
-    format: csv
+    format: dat
     include_header: true
   plot_image:
     format: png
