@@ -150,7 +150,7 @@ omega_radio.grid(row=1, column=0, padx=10)
 vinf_radio = ttk.Radiobutton(radio_buttons_frame, text='Fix Vinf', variable=fixed_param_var, value='vinf')
 vinf_radio.grid(row=1, column=1, padx=10)
 
-radius_mode_var = tk.StringVar()
+radius_mode_var = tk.StringVar(value='auto')
 auto_radius_radio = ttk.Radiobutton(second_buttons_frame,
                                     text='Automatic radius',
                                     variable=radius_mode_var,
@@ -163,7 +163,7 @@ manual_radius_radio = ttk.Radiobutton(second_buttons_frame,
                                      value='manual')
 manual_radius_radio.grid(row=1, column=1, padx=10)
 
-file_format_var = tk.StringVar()
+file_format_var = tk.StringVar(value='dat')
 csv_format = ttk.Radiobutton(second_buttons_frame,
                              text='CSV',
                              variable=file_format_var,
@@ -203,7 +203,7 @@ params = r_var, H_var, twist_var, delta_var, chord_var, B_var, sol_var, omega_va
 progress_bar = ttk.Progressbar(bottom_frame, mode='indeterminate', length=200)
 progress_bar.pack(pady=10)
 
-status_label = ttk.Label(bottom_frame, text='Status: Aguardando...', font=('Arial', 10))
+status_label = ttk.Label(bottom_frame, text='Status: Waiting...', font=('Arial', 10))
 status_label.pack()
 
 # Variáveis de controle
@@ -213,7 +213,7 @@ running = False
 def update_timer():
     if running:
         elapsed = time.time() - start_time
-        status_label.config(text=f"Simulação em andamento... Tempo: {elapsed:.1f}s")
+        status_label.config(text=f"Simulation in progress... Time: {elapsed:.1f}s")
         window.after(1000, update_timer)
 
 def threaded_run():
@@ -234,7 +234,7 @@ def threaded_run():
 
 def start_simulation():
     run_sim_button.config(state='disabled')
-    status_label.config(text="Iniciando simulação...")
+    status_label.config(text="Starting simulation...")
     threading.Thread(target=threaded_run, daemon=True).start()
 
 # Troca o comando do botão

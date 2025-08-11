@@ -22,7 +22,7 @@ simulation:
   fixed_parameter: omega
   num_turbines: 1
   airfoil:
-  - naca0013
+  - naca0021
   Re: 200000
   Mach: 0.3
   include_360_deg_effects: false
