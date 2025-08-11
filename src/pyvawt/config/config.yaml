@@ -22,11 +22,14 @@ simulation:
   fixed_parameter: omega
   num_turbines: 1
   airfoil:
-  - naca0021
-  Re: 200000
+  - naca0012
+  Re: 300000
   Mach: 0.3
   include_360_deg_effects: false
   var_omega_vinf: 1
+aero:
+  method: file  # or "file"
+  file: src/data/experimental/NACA_0012_mod.dat  # only used if method = file
 output:
   save: true
   save_config: true

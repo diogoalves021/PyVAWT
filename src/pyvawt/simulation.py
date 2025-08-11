@@ -8,10 +8,9 @@ import traceback
 import copy
 from scipy.integrate import quad
 from scipy.optimize import root
-from typing import Callable, Tuple
 import matplotlib.pyplot as plt
-from .data_generation import get_cl_cd_neuralfoil
-from .utils import save_config 
+from .data_reading import readaerodyn
+from .utils import save_config, get_cl_cd
 
 # Coefficients of influence
 def panelIntegration(xvec, yvec, thetavec, ifunc):
@@ -406,33 +405,46 @@ class Environment:
 
 def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config, turbine_index, airfoil_index):
     '''
-    Calculates aerodynamic forces and performance coefficients for a VAWT using the actuator cylinder method.
+    Calculate aerodynamic forces and performance coefficients for a Vertical Axis Wind Turbine (VAWT)
+    using the actuator cylinder method.
+
+    This function computes aerodynamic forces based on the specified method for obtaining
+    lift (Cl) and drag (Cd) coefficients:
+    
+    - "neuralfoil": Uses a neural network model to predict Cl and Cd.
+    - "file": Uses precomputed airfoil polars read from a file and interpolated.
 
     Parameters
     ----------
     uvec : ndarray
-        Axial induction factor as a function of azimuth angle (unitless).
+        Axial induction factor as a function of azimuthal angle (unitless).
     vvec : ndarray
-        Tangential induction factor as a function of azimuth angle (unitless).
+        Tangential induction factor as a function of azimuthal angle (unitless).
     thetavec : ndarray
         Azimuthal angle vector [rad].
     turbine : Turbine
-        Turbine object containing turbine geometry and operating parameters.
+        Turbine object containing geometry and operational parameters.
     env : Environment
         Environment object containing wind speed and air properties.
+    config : dict
+        Simulation configuration dictionary, including aerodynamic method selection.
+    turbine_index : int
+        Turbine index (used for multi-turbine simulations).
+    airfoil_index : int
+        Airfoil index (used with the "neuralfoil" method).
 
     Returns
     -------
     q : ndarray
         Local force coefficient per unit length.
     ka : float
-        Correction factor accounting for nonlinear effects and induction.
+        Correction factor for nonlinear effects and induction.
     CT : float
         Thrust coefficient.
     CP : float
         Power coefficient.
     Rp : ndarray
-        Radial force per unit span along the azimuth [N/m].
+        Radial (normal) force per unit span along the azimuth [N/m].
     Tp : ndarray
         Tangential force per unit span along the azimuth [N/m].
     Zp : ndarray
@@ -440,9 +452,9 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
 
     Notes
     -----
-    Two correction models are available for calculating the correction factor `ka`.
-    The active model is based on a piecewise analytical expression depending on `CT`.
-    An alternative model based on a fitted polynomial is also provided but commented out.
+    - The aerodynamic coefficient calculation method is defined by ``config['aero']['method']``.
+    - Two correction models for the induction factor ``ka`` are implemented: a piecewise analytical model (active)
+      and an alternative polynomial fit (commented out for reference).
     '''
     # Unpacking turbine and environment parameters
     r = turbine.r              # Rotor radius
@@ -470,11 +482,12 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     cd = np.zeros_like(alpha)
 
     for i in range(len(alpha)):
-        cl[i], cd[i] = get_cl_cd_neuralfoil(
+        cl[i], cd[i] = get_cl_cd(
             alpha=alpha[i],
             W=W[i],
             turbine_index=turbine_index,
-            airfoil_index=airfoil_index
+            airfoil_index=airfoil_index,
+            config=config
         )
 
     # Normal and tangential force coefficients in the rotor frame
@@ -734,6 +747,14 @@ def initialize_turbine_and_environment(config):
 
     turbine = Turbine(r, chord, twist, delta, B, Omega, centerX, centerY)
     env = Environment(Vinf, rho, mu)
+
+    aero_params = config.get('aero', {})
+    method = aero_params.get('method', 'neuralfoil')
+    if method == 'file':
+        af_func = readaerodyn(aero_params['file'])
+        config['aero']['af_func'] = af_func
+    else:
+        config['aero']['af_func'] = None
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
