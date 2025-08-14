@@ -29,6 +29,7 @@ simulation:
   var_omega_vinf: 1
 aero:
   method: neuralfoil  # or "file"
+  model_size: large # "xxsmall"	"xsmall"	"small"	"medium"	"large"	"xlarge"	"xxlarge"	"xxxlarge"
   file: src/data/experimental/NACA_0012_mod.dat  # only used if method = file
 output:
   save: true

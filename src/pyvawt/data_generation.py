@@ -87,7 +87,7 @@ def get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index):
         alpha=np.rad2deg(alpha),
         Re=Re,
         mach=mach,
-        model_size='xxxlarge',
+        model_size=config['aero']['model_size'],
         include_360_deg_effects=config['simulation']['include_360_deg_effects']
     )
 
