@@ -481,14 +481,8 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     cl = np.zeros_like(alpha)
     cd = np.zeros_like(alpha)
 
-    for i in range(len(alpha)):
-        cl[i], cd[i] = get_cl_cd(
-            alpha=alpha[i],
-            W=W[i],
-            turbine_index=turbine_index,
-            airfoil_index=airfoil_index,
-            config=config
-        )
+    # Calls neuralfoil or interpolate aero data
+    cl, cd = get_cl_cd(alpha, W, turbine_index, airfoil_index, config)
 
     # Normal and tangential force coefficients in the rotor frame
     cn = cl * np.cos(phi) + cd * np.sin(phi)

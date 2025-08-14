@@ -29,26 +29,55 @@ def load_config(path='src/pyvawt/config/config.yaml'):
     return config
 
 def get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index):
-    """
-    Retorna os coeficientes de sustentação (cl) e arrasto (cd) usando o modelo NeuralFoil.
+    '''
+    Return lift and drag coefficients using the NeuralFoil model.
 
-    Parâmetros:
-    - alpha: ângulo de ataque [rad]
-    - W: velocidade relativa [m/s]
-    - config: dicionário com os parâmetros do JSON
-    - turbine_index: índice da turbina no JSON
-    - airfoil_index: índice do aerofólio no JSON
+    Parameters
+    ----------
+    alpha : float or array_like
+        Angle of attack in radians. Can be a scalar or array; if array, `W`
+        must have the same shape.
+    W : float or array_like
+        Relative wind speed at the section in m/s. Same shape as `alpha`.
+    turbine_index : int
+        Index of the turbine in the configuration (used to read chord).
+    airfoil_index : int
+        Index of the airfoil in the configuration (used to select the foil name).
 
-    Retorna:
-    - cl, cd: coeficientes aerodinâmicos
-    """
+    Returns
+    -------
+    cl : ndarray
+        Lift coefficient(s) (C_L). NumPy array with the same shape as `alpha`.
+    cd : ndarray
+        Drag coefficient(s) (C_D). NumPy array with the same shape as `alpha`.
+
+    Raises
+    ------
+    ValueError
+        If `alpha` and `W` have different shapes.
+    RuntimeError
+        If the underlying NeuralFoil call (`asb.Airfoil.get_aero_from_neuralfoil`)
+        fails or required configuration keys are missing.
+
+    Notes
+    -----
+    - This function reads configuration using `load_config()` (so it depends on
+      the presence and format of that configuration).
+    - Local Reynolds number is computed as ``Re = rho * W * chord / mu`` and
+      Mach number as ``mach = W / 343.2`` (speed of sound ~343.2 m/s).
+    - `alpha` is converted from radians to degrees before calling the NeuralFoil
+      API because the `get_aero_from_neuralfoil` method expects angles in degrees.
+    - The function instantiates ``asb.Airfoil(name=...)`` on each call (no cache).
+    - The NeuralFoil call uses ``model_size='xxxlarge'`` and reads
+      ``include_360_deg_effects`` from the configuration.
+    - Returned arrays are reshaped to match the input `alpha` shape.
+    '''
     config = load_config()
     
-
-    chord = config["turbine"]["chord"][turbine_index]
-    rho = config["environment"]["rho"]
-    mu = config["environment"]["mu"]
-    airfoil_name = config["simulation"]["airfoil"][airfoil_index]
+    chord = config['turbine']['chord'][turbine_index]
+    rho = config['environment']['rho']
+    mu = config['environment']['mu']
+    airfoil_name = config['simulation']['airfoil'][airfoil_index]
 
     Re = rho * W * chord / mu
     mach = W / 343.2
@@ -58,8 +87,11 @@ def get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index):
         alpha=np.rad2deg(alpha),
         Re=Re,
         mach=mach,
-        model_size="xxxlarge",
-        include_360_deg_effects=config["simulation"]["include_360_deg_effects"]
+        model_size='xxxlarge',
+        include_360_deg_effects=config['simulation']['include_360_deg_effects']
     )
-    return aero["CL"], aero["CD"]
+
+    cl = np.asarray(aero['CL']).reshape(alpha.shape)
+    cd = np.asarray(aero['CD']).reshape(alpha.shape)
+    return cl, cd
 

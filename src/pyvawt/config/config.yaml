@@ -28,7 +28,7 @@ simulation:
   include_360_deg_effects: false
   var_omega_vinf: 1
 aero:
-  method: file  # or "file"
+  method: neuralfoil  # or "file"
   file: src/data/experimental/NACA_0012_mod.dat  # only used if method = file
 output:
   save: true
