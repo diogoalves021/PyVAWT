@@ -4,8 +4,11 @@ import time
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tabulate import tabulate
+
 from src.pyvawt.simulation import run_simulation_case
 from src.pyvawt.utils import load_config
+
+#run command: uv run python3 -m src.pyvawt.main
 
 def format_time_sec_to_minsec(seconds):
     try:
@@ -97,6 +100,7 @@ def run_simulation():
     chords = config['turbine']['chord']
     solidities = config['turbine']['solidity']
     vinfs = config['environment']['Vinf']
+    flow_cfg = config.get("flow_curvature", {})
 
     combinations = []
     for ai in airfoil_indices:
@@ -125,7 +129,7 @@ def run_simulation():
 
     with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
         futures = {
-            executor.submit(run_simulation_case, params, config): params
+            executor.submit(run_simulation_case, params, config, flow_cfg): params
             for params in combinations
         }
 

@@ -9,8 +9,11 @@ import copy
 from scipy.integrate import quad
 from scipy.optimize import root
 import matplotlib.pyplot as plt
+
+from src.pyvawt.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
 from .data_reading import readaerodyn
 from .utils import save_config, get_cl_cd
+
 
 # Coefficients of influence
 def panelIntegration(xvec, yvec, thetavec, ifunc):
@@ -403,7 +406,7 @@ class Environment:
         self.rho = rho
         self.mu = mu
 
-def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config, turbine_index, airfoil_index):
+def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config, turbine_index, airfoil_index, flow_manager):
     '''
     Calculate aerodynamic forces and performance coefficients for a Vertical Axis Wind Turbine (VAWT)
     using the actuator cylinder method.
@@ -476,6 +479,11 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     W = np.sqrt(Vn**2 + Vt**2) # Magnitude of relative wind velocity
     phi = np.arctan2(Vn, Vt) # Flow angle (between rotor plane and relative velocity)
     alpha = phi - turbine.twist # Angle of attack (flow angle minus blade pitch)
+    if flow_manager is None:
+        alpha_corr = alpha
+    else:
+        alpha_corr = flow_manager.corrected_flow(alpha, Omega, W)
+    alpha = alpha_corr
 
     # Lift and drag coefficients from airfoil function
     cl = np.zeros_like(alpha)
@@ -532,12 +540,11 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
 
     return q, ka, CT, CP, Rp, Tp, Zp
 
-
 #------------------------------------
 #
 #-------- solve the system --------
 
-def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index):
+def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager):
     '''
     Compute the residual for the actuator-cylinder equations of a single VAWT.
 
@@ -573,14 +580,14 @@ def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index):
     v = w[ntheta:]
 
     # Compute radial force, returns q (length ntheta) and the scalar kappa (ka)
-    q, ka, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index)
+    q, ka, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager)
 
     # Build k_mult twice (for u- and v-equations)
     kmult = np.full(2 * ntheta, ka)
 
     return (A @ q) * kmult - w
 
-def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index):
+def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager):
     '''
     Solve the actuator-cylinder model for a single VAWT turbine.
 
@@ -625,14 +632,14 @@ def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index)
 
     w0 = np.zeros(2 * len(theta))
 
-    sol = root(residual, w0, args=(A, theta, turbine, env, config, turbine_index, airfoil_index), tol=1e-6)
+    sol = root(residual, w0, args=(A, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager), tol=1e-6)
     if not sol.success:
         raise RuntimeError(f'Solver did not converge: {sol.message}')
 
     w = sol.x
     u, v = w[:len(theta)], w[len(theta):]
 
-    q, ka, CT, CP, Rp, Tp, Zp = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index)
+    q, ka, CT, CP, Rp, Tp, Zp = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager)
     
     return CT, CP, Rp, Tp, Zp, theta
 
@@ -752,7 +759,7 @@ def initialize_turbine_and_environment(config):
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
-def run_simulation_case(params, base_config):
+def run_simulation_case(params, base_config, flow_cfg=None):
     '''
     Executes a single aerodynamic simulation for a vertical-axis wind turbine (VAWT)
     using the provided parameters and base configuration.
@@ -823,6 +830,18 @@ def run_simulation_case(params, base_config):
     delta = config['turbine']['delta']
     r = config['turbine']['r']
 
+    if flow_cfg is None:
+        flow_cfg = {}
+
+    if flow_cfg.get('enabled', False):
+        flow_manager = FlowCurvatureManager(
+            chord=chord, 
+            normalized_hook_point=flow_cfg.get('normalized_hook_point', 0.0),
+            enabled=True
+        )
+    else:
+        flow_manager = None
+
     def fmt(val):
         return str(val).replace('.', 'p')
 
@@ -860,7 +879,7 @@ def run_simulation_case(params, base_config):
             for i, tsr in enumerate(tsrvec):
                 turbine.Omega = vinf * tsr / r
                 CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
-                    turbine, env, ntheta, config, turbine_index, airfoil_index
+                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager
                 )
                 CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
                     CP,
@@ -876,7 +895,7 @@ def run_simulation_case(params, base_config):
                 turbine.Omega = angular_velocity
                 env.Vinf = turbine.Omega * r / tsr
                 CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
-                    turbine, env, ntheta, config, turbine_index, airfoil_index
+                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager
                 )
                 CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
                     CP,
