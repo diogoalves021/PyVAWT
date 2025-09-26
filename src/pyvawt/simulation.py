@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 
 from src.pyvawt.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
 from .data_reading import readaerodyn
-from .utils import save_config, get_cl_cd
+from .utils import save_config
+from .data_generation import get_cl_cd_neuralfoil
 
 
 # Coefficients of influence
@@ -378,7 +379,11 @@ class Turbine:
     Omega : float
         Rotational speed of the turbine [rad/s].
     '''
-    def __init__(self, r: float, chord: float, twist: float, delta: float, B: int, Omega: float, centerX: float, centerY: float):
+    def __init__(self, r: float, chord: float,
+                twist: float, delta: float,
+                B: int, Omega: float,
+                centerX: float, centerY: float,
+                aero_model = None):
         self.r = r
         self.chord = chord
         self.twist = twist
@@ -387,6 +392,93 @@ class Turbine:
         self.Omega = Omega
         self.centerX = centerX
         self.centerY = centerY
+        self.aero = aero_model
+
+class Aerodynamics:
+    '''
+    Abstract base class for aerodynamics models.
+    '''
+    def get_cl_cd(self, alpha, W=None):
+        '''
+        Returns the lift and drag coefficients.
+
+        Parameters
+        ----------
+        alpha : float
+            Angle of attack [rad].
+        W : float, optional
+            Relative wind speed [m/s].
+
+        Returns
+        -------
+        tuple of floats
+            (Cl, Cd)
+        '''
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+class NeuralFoilAerodynamics(Aerodynamics):
+    '''
+    Aerodynamics model using a neural network (NeuralFoil) to calculate Cl and Cd.
+
+    Parameters
+    ----------
+    turbine_index : int
+        Turbine index used to access neural network training data.
+    airfoil_index : int
+        Airfoil index.
+    '''
+    def __init__(self,  turbine_index, airfoil_index):
+        self.turbine_index = turbine_index
+        self.airfoil_index = airfoil_index
+
+    def get_cl_cd(self, alpha, W):
+        '''
+        Returns Cl and Cd using the neural network model.
+
+        Parameters
+        ----------
+        alpha : float
+            Angle of attack [rad].
+        W : float
+            Relative wind speed [m/s].
+
+        Returns
+        -------
+        tuple of floats
+            (Cl, Cd)
+        '''
+        return get_cl_cd_neuralfoil(alpha, W, self.turbine_index, self.airfoil_index)
+    
+class FileAerodynamics(Aerodynamics):
+    '''
+    Aerodynamics model using airfoil data from a file to calculate Cl and Cd.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the file containing airfoil data.
+    '''
+    def __init__(self, filename):
+        self.af_func = readaerodyn(filename)
+
+    def get_cl_cd(self, alpha, W=None):
+        '''
+        Returns Cl and Cd interpolated from airfoil data.
+
+        Parameters
+        ----------
+        alpha : float
+            Angle of attack [rad].
+        W : float, optional
+            Not used, kept for compatibility with interface.
+
+        Returns
+        -------
+        tuple of floats
+            (Cl, Cd)
+        '''
+        return self.af_func(alpha)
+        
 
 class Environment:
     '''
@@ -490,7 +582,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     cd = np.zeros_like(alpha)
 
     # Calls neuralfoil or interpolate aero data
-    cl, cd = get_cl_cd(alpha, W, turbine_index, airfoil_index, config)
+    cl, cd = turbine.aero.get_cl_cd(alpha, W)
 
     # Normal and tangential force coefficients in the rotor frame
     cn = cl * np.cos(phi) + cd * np.sin(phi)
@@ -649,7 +741,7 @@ def get_radius_from_config(turbine_config: dict) -> float:
 
     The radius can be defined in two ways:
     - 'manual': uses the provided value of 'r' directly.
-    - 'auto': calculates the radius from other parameters using the formula:
+    - ''auto'': calculates the radius from other parameters using the formula:
         r = (B * chord) / (solidity * H)
 
     Parameters
@@ -722,8 +814,8 @@ def initialize_turbine_and_environment(config):
 
     Notes
     -----
-    The function also reads airfoil data using the `readaerodyn_neuralfoil` function
-    and uses it to initialize the turbine's aerodynamic properties.
+    The function also initializes the turbine's aerodynamic model (NeuralFoilAerodynamics or FileAerodynamics)
+    based on the configuration and reads airfoil data if necessary.
     '''
     turbine_params = config['turbine']
     environment_params = config['environment']
@@ -752,10 +844,12 @@ def initialize_turbine_and_environment(config):
     aero_params = config.get('aero', {})
     method = aero_params.get('method', 'neuralfoil')
     if method == 'file':
-        af_func = readaerodyn(aero_params['file'])
-        config['aero']['af_func'] = af_func
+        filename = aero_params.get('file')
+        if not filename:
+            raise ValueError("aero.file not defined in config, it's necessary a method='file'")
+        turbine.aero = FileAerodynamics(filename)
     else:
-        config['aero']['af_func'] = None
+        turbine.aero = None
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
@@ -861,7 +955,9 @@ def run_simulation_case(params, base_config, flow_cfg=None):
 
     turbine, env, sim_params, _, _, _, ntheta = initialize_turbine_and_environment(config)
     fixed_parameter = sim_params['fixed_parameter']
-    num_turbines = sim_params['num_turbines']
+    aero_method = config.get('aero', {}).get('method', 'neuralfoil')
+    if aero_method == 'neuralfoil':
+        turbine.aero = NeuralFoilAerodynamics(turbine_index=turbine_index, airfoil_index=airfoil_index)
 
     start_time = time.time()
     try:

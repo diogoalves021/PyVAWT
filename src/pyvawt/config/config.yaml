@@ -1,34 +1,35 @@
 turbine:
-  radius_mode: manual #"manual" or "auto"
-  r: 35.0
+  radius_mode: manual #"manual" or "auto", calculate radius based on hight ou not.
+  r: 3.0
   H: 1.0
   twist: 0.0
   delta: 0.0
   chord:
-  - 1.75
-  B: 2
+  - 0.25
+  B: 3
   solidity:
-  - 0.1
+  - 0.125
   centerX: 0
   centerY: 0
-  Omega: 1.427
+  Omega: 5.03
   ntheta: 36
 environment:
   Vinf:
-  - 6.23
+  - 5.03
   rho: 1.225
   mu: 1.7894e-05
 simulation:
-  fixed_parameter: vinf # "omega" or "vinf"
+  fixed_parameter: omega # "omega" or "vinf"
   num_turbines: 1
   airfoil:
+  - naca0012
   - naca0018
   Re: 300000
   Mach: 0.3
   include_360_deg_effects: false
   var_omega_vinf: 1
 aero:
-  method: neuralfoil  # "neuralfoil" or "file"
+  method: neuralfoil  # "neuralfoil" or "file". It's the way the cl and cd is obtained.
   model_size: large # "xxsmall"	"xsmall"	"small"	"medium"	"large"	"xlarge"	"xxlarge"	"xxxlarge"
   file: src/data/experimental/NACA_0012_mod.dat  # only used if method = file
 output:
@@ -42,5 +43,5 @@ output:
     format: png # "png" or "eps"
     dpi: 300
 flow_curvature:
-  enabled: false          # "true" or "false"
+  enabled: true          # "true" or "false"
   normalized_hook_point: 0.0
