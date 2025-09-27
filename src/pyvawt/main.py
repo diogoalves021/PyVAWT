@@ -34,7 +34,9 @@ def print_summary_tabulate(results, log_path):
     print(tabulate(rows, headers=headers, tablefmt='plain'))
     print(f'\nLog saved to: {log_path}')
 
-def run_simulation():
+# test/data/config.yaml src/pyvawt/config/config.yaml
+
+def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     '''
     Run a batch of aerodynamic simulations defined by the configuration.
 
@@ -93,8 +95,8 @@ def run_simulation():
 
     >>> run_simulation()
     '''
-    config = load_config()
-
+    config = load_config(path=config_path)
+    print(f'DEBUG (run_simulation) - config: {config}')
     airfoil_indices = list(range(len(config['simulation']['airfoil'])))
     turbine_indices = list(range(config['simulation']['num_turbines']))
     chords = config['turbine']['chord']

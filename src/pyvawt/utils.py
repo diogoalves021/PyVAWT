@@ -2,7 +2,7 @@ import yaml
 import os
 from .data_generation import get_cl_cd_neuralfoil
 
-def load_config(path='src/pyvawt/config/config.yaml'):
+def load_config(path):
     '''
     Loads the simulation configuration from a YAML file and returns it as a dictionary.
 
@@ -10,7 +10,6 @@ def load_config(path='src/pyvawt/config/config.yaml'):
     ----------
     path : str, optional
         Path to the `.yaml` configuration file.
-        Default is 'src/pyvawt/config/config.yaml'.
 
     Returns
     -------
@@ -60,3 +59,18 @@ def save_config(config, path):
 
     with open(path, 'w') as f:
         yaml.dump(config, f, sort_keys=False)
+
+def read_dat(path):
+    """
+    Reads a .dat file and converts it into a list of lists of floats.
+    Example: [[TSR, CP, CT, Rp, Tp, Zp], ...]
+    """
+    data = []
+    with open(path, "r") as f:
+        next(f)
+        for line in f:
+            if line.strip() == "":
+                continue
+            values = [float(x) for x in line.split()]
+            data.append(values)
+    return data

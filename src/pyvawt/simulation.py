@@ -780,7 +780,7 @@ def get_radius_from_config(turbine_config: dict) -> float:
         solidity = turbine_config.get('solidity')
         if None in (B, chord, solidity):
             raise ValueError('Missing parameters for automatic radius calculation.')
-        return (B * chord) / (solidity * H)
+        return (B * chord) / (2.0 * solidity * H)
 
     else:
         raise ValueError(f'Invalid radius mode: {mode}. Use "manual" or "auto".')
