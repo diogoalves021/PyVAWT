@@ -74,3 +74,6 @@ def read_dat(path):
             values = [float(x) for x in line.split()]
             data.append(values)
     return data
+
+def mach(W):
+    return(W / 343.2)
