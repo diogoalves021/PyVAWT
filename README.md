@@ -1,5 +1,7 @@
 # PyVAWT
 
+> **Development Status:** Active development is currently focused on the [`feat/one-turbine-optimization`](https://github.com/seu-usuario/pyvawt/tree/feat/one-turbine-optimization) branch, specializing in single turbine simulation optimization. The `master` branch is not under active development. `Master` will be developed in the near future.
+
 PyVAWT is a Python program for simulating Vertical Axis Wind Turbines (VAWTs) using the actuator cylinder method. This method models the aerodynamic behavior of VAWTs by representing the rotor as a series of cylinders interacting with the wind flow.
 
 ## Description
