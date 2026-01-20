@@ -4,6 +4,8 @@ import shutil
 from src.pyvawt.main import run_simulation, load_config
 from src.pyvawt.utils import read_dat, save_config
 
+# How to run this test: 'uv run pytest'
+
 def test_simulation(tmp_path):
     '''
     Test the accuracy of the Vertical-Axis Wind Turbine (VAWT) simulation.

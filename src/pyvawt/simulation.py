@@ -576,6 +576,17 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     else:
         alpha_corr = flow_manager.corrected_flow(alpha, Omega, W)
     alpha = alpha_corr
+   
+    # Angular derivative
+    # d(alpha)/d(theta) 
+    dalpha_dtheta = np.gradient(alpha, theta, edge_order=2)
+    
+    # d(alpha)/dt
+    adot = Omega * dalpha_dtheta
+
+    # Normalized alpha
+    adot_norm = adot * chord / (2.0 * W)
+
 
     # Lift and drag coefficients from airfoil function
     cl = np.zeros_like(alpha)
@@ -630,7 +641,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     P = abs(Omega) * B / (2 * np.pi) * np.trapz(Q, x=thetavec)  # Total power
     CP = P / (0.5 * rho * Vinf**3 * Sref)  # Power coefficient
 
-    return q, ka, CT, CP, Rp, Tp, Zp
+    return q, ka, CT, CP, Rp, Tp, Zp, alpha, W, adot, adot_norm
 
 #------------------------------------
 #
@@ -731,7 +742,7 @@ def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index,
     w = sol.x
     u, v = w[:len(theta)], w[len(theta):]
 
-    q, ka, CT, CP, Rp, Tp, Zp = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager)
+    q, ka, CT, CP, Rp, Tp, Zp, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager)
     
     return CT, CP, Rp, Tp, Zp, theta
 
