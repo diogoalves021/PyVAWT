@@ -1,3 +1,4 @@
+from numba import jit
 import numpy as np
 import math
 import os
@@ -11,12 +12,14 @@ from scipy.optimize import root
 import matplotlib.pyplot as plt
 
 from src.pyvawt.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
+from src.pyvawt.submodels.boeing_vertol import af, Boeing_Vertol
 from .data_reading import readaerodyn
 from .utils import save_config
 from .data_generation import get_cl_cd_neuralfoil
-
+from src.pyvawt.utils import load_config, get_tc_from_airfoil, detect_stall_angles
 
 # Coefficients of influence
+@jit
 def panelIntegration(xvec, yvec, thetavec, ifunc):
     '''
     Perform panel integration to compute influence coefficients.
@@ -65,7 +68,7 @@ def panelIntegration(xvec, yvec, thetavec, ifunc):
             A[i, j] = result
 
     return A
-
+@jit
 def Dxintegrand(x, y, phi):
     '''
     Integrand function for computing Dx.
@@ -92,7 +95,7 @@ def Dxintegrand(x, y, phi):
     print(v1, v2)
     # v1 and v2 must not be zero because we never integrate self. RxII handles this situation.
     return (v1 * math.sin(phi) - v2 * math.cos(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
-
+@jit
 def Ayintegrand(x, y, phi):
     '''
     Integrand function for computing Ay.
@@ -119,7 +122,7 @@ def Ayintegrand(x, y, phi):
         # Occurs when integrating self; the function is symmetric around the singularity and should integrate to zero
         return 0.0
     return (v1 * math.cos(phi) + v2 * math.sin(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
-
+@jit
 def AyIJ(xvec, yvec, thetavec):
     '''
     Compute AyIJ by integrating with the Ayintegrand function.
@@ -141,7 +144,7 @@ def AyIJ(xvec, yvec, thetavec):
         The result of the Ay integration for each panel.
     '''
     return panelIntegration(xvec, yvec, thetavec, Ayintegrand)
-
+@jit
 def DxIJ(xvec, yvec, thetavec):
     '''
     Compute DxIJ by integrating with the Dxintegrand function.
@@ -163,7 +166,7 @@ def DxIJ(xvec, yvec, thetavec):
         The result of the Dx integration for each panel.
     '''
     return panelIntegration(xvec, yvec, thetavec, Dxintegrand)
-
+@jit
 def WxIJ(xvec, yvec, thetavec):
     '''
     Compute WxIJ by processing the x and y coordinates to determine influence of panels.
@@ -205,7 +208,7 @@ def WxIJ(xvec, yvec, thetavec):
                 Wx[i, ntheta - k - 1] = 1.0
 
     return Wx
-
+@jit
 def DxII(thetavec):
     '''
     Compute DxII based on the given angles.
@@ -234,7 +237,7 @@ def DxII(thetavec):
             Rx[i, i] = (1 + 1.0 / ntheta) / 2.0
 
     return Rx
-
+@jit
 def WxII(thetavec):
     '''
     Generate the Wx matrix for a given set of angular divisions.
@@ -497,8 +500,11 @@ class Environment:
         self.Vinf = Vinf
         self.rho = rho
         self.mu = mu
+        self.BV_DynamicFlagL = 0
+        self.BV_DynamicFlagD = 0
 
-def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config, turbine_index, airfoil_index, flow_manager):
+def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
+                config, turbine_index, airfoil_index, flow_manager):
     '''
     Calculate aerodynamic forces and performance coefficients for a Vertical Axis Wind Turbine (VAWT)
     using the actuator cylinder method.
@@ -564,6 +570,15 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     # Direction of rotation: +1 or -1
     rotation = np.sign(Omega)
 
+    # Safety check for stall angles (dynamic stall model)
+    if config['aero'].get('dynamic_stall', True):
+        if not hasattr(turbine.aero, "aoaStallPos") or not hasattr(turbine.aero, "aoaStallNeg"):
+            raise RuntimeError(
+                "Dynamic stall enabled but stall angles were not initialized in turbine.aero.\n"
+                "Make sure detect_stall_angles() is called in run_simulation_case() "
+                "and assigned to turbine.aero.aoaStallPos / aoaStallNeg."
+            )
+
     # Normal (Vn) and tangential (Vt) components of relative velocity
     Vn = Vinf * (1.0 + uvec) * np.sin(thetavec) - Vinf * vvec * np.cos(thetavec)
     Vt = (rotation * (Vinf * (1.0 + uvec) * np.cos(thetavec) + Vinf * vvec * np.sin(thetavec)) + abs(Omega) * r)
@@ -577,23 +592,76 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
         alpha_corr = flow_manager.corrected_flow(alpha, Omega, W)
     alpha = alpha_corr
    
-    # Angular derivative
-    # d(alpha)/d(theta) 
-    dalpha_dtheta = np.gradient(alpha, theta, edge_order=2)
-    
-    # d(alpha)/dt
-    adot = Omega * dalpha_dtheta
-
-    # Normalized alpha
-    adot_norm = adot * chord / (2.0 * W)
-
-
     # Lift and drag coefficients from airfoil function
     cl = np.zeros_like(alpha)
     cd = np.zeros_like(alpha)
+    cm = np.zeros_like(alpha)
 
-    # Calls neuralfoil or interpolate aero data
-    cl, cd = turbine.aero.get_cl_cd(alpha, W)
+    config = load_config(path='src/pyvawt/config/config.yaml')
+    use_dynamic_stall = config['aero'].get('dynamic_stall', True)
+
+    if use_dynamic_stall:
+
+        # Angular derivative
+        # d(alpha)/d(theta) 
+        dalpha_dtheta = np.gradient(alpha, thetavec, edge_order=2)
+        
+        # d(alpha)/dt
+        adot = Omega * dalpha_dtheta
+
+        # Normalized alpha
+        adotnorm = adot * chord / (2.0 * W)
+
+        # Local Reynolds
+        Re = rho * W * chord / env.mu
+
+        # Local mach 
+        v_sound = 340.0
+        umach = W / v_sound
+
+        # Uses boeing_vertoling-Vertol dynamic stall correction
+        flagL = int(env.BV_DynamicFlagL)
+        flagD = int(env.BV_DynamicFlagD)
+
+        tc = get_tc_from_airfoil(config, airfoil_index)
+
+        # Calls neuralfoil or interpolate aero data
+        cl_static, cd_static = turbine.aero.get_cl_cd(alpha, W)
+        cm_static = np.zeros_like(cl_static)
+
+        # Static AOA
+        aoaStallPos = turbine.aero.aoaStallPos
+        aoaStallNeg = turbine.aero.aoaStallNeg
+        
+        for i in range(len(alpha)):
+
+            cl[i], cd[i], cm[i], flagL, flagD = Boeing_Vertol(
+                cl_static[i],
+                cd_static[i],
+                cm_static[i],
+                alpha[i],
+                adotnorm[i],
+                umach[i],
+                Re[i],
+                aoaStallPos,
+                aoaStallNeg,
+                0.0,
+                tc,
+                flagL,
+                flagD,
+                turbine_index,
+                airfoil_index,
+
+            )
+
+
+
+        env.BV_DynamicFlagL = flagL
+        env.BV_DynamicFlagD = flagD
+
+    else:
+        # Calls neuralfoil or interpolate aero data
+        cl, cd = turbine.aero.get_cl_cd(alpha, W)
 
     # Normal and tangential force coefficients in the rotor frame
     cn = cl * np.cos(phi) + cd * np.sin(phi)
@@ -641,7 +709,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment, config
     P = abs(Omega) * B / (2 * np.pi) * np.trapz(Q, x=thetavec)  # Total power
     CP = P / (0.5 * rho * Vinf**3 * Sref)  # Power coefficient
 
-    return q, ka, CT, CP, Rp, Tp, Zp, alpha, W, adot, adot_norm
+    return q, ka, CT, CP, Rp, Tp, Zp, alpha, W
 
 #------------------------------------
 #
@@ -864,7 +932,7 @@ def initialize_turbine_and_environment(config):
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
-def run_simulation_case(params, base_config, flow_cfg=None):
+def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
     '''
     Executes a single aerodynamic simulation for a vertical-axis wind turbine (VAWT)
     using the provided parameters and base configuration.
@@ -969,6 +1037,11 @@ def run_simulation_case(params, base_config, flow_cfg=None):
     aero_method = config.get('aero', {}).get('method', 'neuralfoil')
     if aero_method == 'neuralfoil':
         turbine.aero = NeuralFoilAerodynamics(turbine_index=turbine_index, airfoil_index=airfoil_index)
+
+    # Pass airfoil stall angles to the class turbine
+    aoaStallPos, aoaStallNeg = stall_angles[airfoil_index]
+    turbine.aero.aoaStallPos = aoaStallPos
+    turbine.aero.aoaStallNeg = aoaStallNeg
 
     start_time = time.time()
     try:

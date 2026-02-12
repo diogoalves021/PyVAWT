@@ -1,28 +1,28 @@
 turbine:
   radius_mode: manual
-  r: 1.51
+  r: 35.0
   H: 1.0
   twist: 0.0
   delta: 0.0
   chord:
-  - 0.086
-  B: 3
+  - 1.75
+  B: 2
   solidity:
-  - 0.38
+  - 0.1
   centerX: 0
   centerY: 0
-  Omega: 41.89
+  Omega: 1.427
   ntheta: 36
 environment:
   Vinf:
-  - 0.1
+  - 6.23
   rho: 1.225
   mu: 1.7894e-05
 simulation:
-  fixed_parameter: omega
+  fixed_parameter: vinf
   num_turbines: 1
   airfoil:
-  - naca0021
+  - naca0018
   Re: 300000
   Mach: 0.3
   include_360_deg_effects: false
@@ -31,6 +31,7 @@ aero:
   method: neuralfoil
   model_size: xxxlarge
   file: src/data/experimental/NACA_0012_mod.dat
+  dynamic_stall: true
 output:
   save: true
   save_config: true

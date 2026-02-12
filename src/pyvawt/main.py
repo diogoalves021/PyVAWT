@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tabulate import tabulate
 
 from src.pyvawt.simulation import run_simulation_case
-from src.pyvawt.utils import load_config
+from src.pyvawt.utils import load_config, detect_stall_angles
 
 #run command: uv run python3 -m src.pyvawt.main
 
@@ -96,7 +96,15 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     >>> run_simulation()
     '''
     config = load_config(path=config_path)
-    print(f'DEBUG (run_simulation) - config: {config}')
+
+    stall_angles = {}
+
+    for airfoil_index in range(len(config['simulation']['airfoil'])):
+        aoaStallPos, aoaStallNeg = detect_stall_angles(config, airfoil_index)
+        stall_angles[airfoil_index] = (aoaStallPos, aoaStallNeg)
+
+    print("Stall angles computed successfully.\n")
+
     airfoil_indices = list(range(len(config['simulation']['airfoil'])))
     turbine_indices = list(range(config['simulation']['num_turbines']))
     chords = config['turbine']['chord']
@@ -131,7 +139,7 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
 
     with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
         futures = {
-            executor.submit(run_simulation_case, params, config, flow_cfg): params
+            executor.submit(run_simulation_case, params, config, flow_cfg, stall_angles): params
             for params in combinations
         }
 

@@ -32,7 +32,7 @@ def get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index):
     '''
     Return lift and drag coefficients using the NeuralFoil model.
 
-    Parameters
+    Parameter
     ----------
     alpha : float or array_like
         Angle of attack in radians. Can be a scalar or array; if array, `W`
