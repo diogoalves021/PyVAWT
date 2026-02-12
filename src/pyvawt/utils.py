@@ -118,8 +118,8 @@ def detect_stall_angles(config, airfoil_index):
 
     # Flow conditions
     Re = 2.5e6
-    mach = 0.0
-    model_size = "xxxlarge"
+    mach = 3.0
+    model_size = "large"
 
     # NeuralFoil
     aero = nf.get_aero_from_airfoil(
@@ -138,5 +138,7 @@ def detect_stall_angles(config, airfoil_index):
     aoaStallPos = np.deg2rad(alpha_deg[idx_pos])
     aoaStallNeg = np.deg2rad(alpha_deg[idx_neg])
 
+    print('Positive stall angle: ', aoaStallPos)
+    print('Negative stall angle: ', aoaStallNeg)
     return aoaStallPos, aoaStallNeg
 

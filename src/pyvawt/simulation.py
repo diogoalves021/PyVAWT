@@ -570,15 +570,6 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
     # Direction of rotation: +1 or -1
     rotation = np.sign(Omega)
 
-    # Safety check for stall angles (dynamic stall model)
-    if config['aero'].get('dynamic_stall', True):
-        if not hasattr(turbine.aero, "aoaStallPos") or not hasattr(turbine.aero, "aoaStallNeg"):
-            raise RuntimeError(
-                "Dynamic stall enabled but stall angles were not initialized in turbine.aero.\n"
-                "Make sure detect_stall_angles() is called in run_simulation_case() "
-                "and assigned to turbine.aero.aoaStallPos / aoaStallNeg."
-            )
-
     # Normal (Vn) and tangential (Vt) components of relative velocity
     Vn = Vinf * (1.0 + uvec) * np.sin(thetavec) - Vinf * vvec * np.cos(thetavec)
     Vt = (rotation * (Vinf * (1.0 + uvec) * np.cos(thetavec) + Vinf * vvec * np.sin(thetavec)) + abs(Omega) * r)

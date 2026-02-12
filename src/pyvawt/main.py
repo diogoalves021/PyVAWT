@@ -103,7 +103,7 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
         aoaStallPos, aoaStallNeg = detect_stall_angles(config, airfoil_index)
         stall_angles[airfoil_index] = (aoaStallPos, aoaStallNeg)
 
-    print("Stall angles computed successfully.\n")
+    print("Airfoil stall angles computed successfully.\n")
 
     airfoil_indices = list(range(len(config['simulation']['airfoil'])))
     turbine_indices = list(range(config['simulation']['num_turbines']))
