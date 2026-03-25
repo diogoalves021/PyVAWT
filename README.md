@@ -131,6 +131,18 @@ Lastly, after setting up your environment and configuring the simulation paramet
 uv run python3 -m src.pyvawt.main
 ```
 
+### Terminal Output
+
+Before starting the simulation, PyVAWT prints a **simulation summary** in the terminal showing the most relevant parameters (turbine geometry, inflow conditions, and aerodynamic model). This allows the user to quickly verify that the configuration is correct before the calculations begin.
+
+If you want to display **all parameters contained in the YAML file**, you can run the solver with the following optional flag:
+
+```bash
+uv run python3 -m src.pyvawt.main --show-config
+```
+
+This will print the complete configuration structure before the simulation starts. This option is useful for debugging configuration files or verifying complex parametric studies.
+
 This will start the simulation and the results will be displayed according to the parameters specified in the YAML configuration file. A folder will then be created with a unique name related to each parameter you specified, and this folder will contain the results. In each folder, there will be the following files:
 
 1. YAML file with the simulation parameters.

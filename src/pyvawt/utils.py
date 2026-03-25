@@ -3,6 +3,10 @@ import os
 import numpy as np
 import neuralfoil as nf
 import aerosandbox as asb
+import argparse
+import time
+from tabulate import tabulate
+
 from .data_generation import get_cl_cd_neuralfoil
 
 def load_config(path):
@@ -81,13 +85,12 @@ def read_dat(path):
 def mach(W):
     return(W / 343.2)
 
-def get_tc_from_airfoil(config, airfoil_index):
+def get_tc_from_airfoil(airfoil_name: str):
     """
-    Returns thickness-to-chord ratio (t/c) from airfoil defined in config.
+    Returns thickness-to-chord ratio (t/c) from airfoil name.
     Works for 4 digit NACA airfoils.
     """
-
-    airfoil_name = config['simulation']['airfoil'][airfoil_index].lower()
+    airfoil_name = airfoil_name.lower()
 
     if airfoil_name.startswith("naca") and len(airfoil_name) == 8:
         thickness_digits = airfoil_name[-2:]
@@ -131,14 +134,184 @@ def detect_stall_angles(config, airfoil_index):
 
     cl = aero["CL"]
 
-    # Detect stall
+    # Detect airfoil_name stall
     idx_pos = np.argmax(cl)
     idx_neg = np.argmin(cl)
 
     aoaStallPos = np.deg2rad(alpha_deg[idx_pos])
     aoaStallNeg = np.deg2rad(alpha_deg[idx_neg])
 
-    print('Positive stall angle: ', aoaStallPos)
-    print('Negative stall angle: ', aoaStallNeg)
+    aoaStallPos_deg = np.degrees(aoaStallPos)
+
+    if not np.isclose(aoaStallPos, -aoaStallNeg, rtol=1e-9):
+        raise ValueError("Stall angles error: stall angles are not symmetric.")
+
+    print(f'{airfoil_name.upper()} stall angle: ± {aoaStallPos_deg:.1f}°')
     return aoaStallPos, aoaStallNeg
 
+def print_config(config):
+    print("\nSimulation parameters")
+    print("=" * 40)
+
+    for section, params in config.items():
+        print(f"\n{section.upper()}")
+        print("-" * 40)
+
+        for key, value in params.items():
+            print(f"{key:<20} : {value}")
+
+def print_summary(config):
+    print("\nSimulation summary")
+    print("=" * 40)
+
+    turb = config.get("turbine", {})
+    env = config.get("environment", {})
+    sim = config.get("simulation", {})
+    aero = config.get("aero", {})
+
+    print("\nTURBINE")
+    print("-" * 40)
+    print(f"radius (r)           : {turb.get('r')}")
+    print(f"height (H)           : {turb.get('H')}")
+    print(f"blades (B)           : {turb.get('B')}")
+    print(f"chord                : {turb.get('chord')}")
+    print(f"theta discretization : {turb.get('ntheta')}")
+
+    print("\nENVIRONMENT")
+    print("-" * 40)
+    print(f"wind speed (Vinf)    : {env.get('Vinf')}")
+    print(f"density (rho)        : {env.get('rho')}")
+
+    print("\nSIMULATION")
+    print("-" * 40)
+    print(f"airfoil              : {sim.get('airfoil')}")
+    print(f"Reynolds number      : {sim.get('Re')}")
+    print(f"Mach number          : {sim.get('Mach')}")
+    print(f"dynamic stall        : {aero.get('dynamic_stall')}")
+
+    print("=" * 40)
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(
+        description="Run VAWT actuator-cylinder simulations."
+    )
+
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=None,
+        help="Path to YAML configuration file (default: config.yaml)"
+    )
+
+    parser.add_argument(
+        "--show-config",
+        action="store_true",
+        help="Show full configuration before running simulation"
+    )
+
+    return parser.parse_args()
+
+def print_simulation_footer(results, start_time, log_path):
+    """
+    Print a clear final summary of the simulation run.
+
+    Parameters
+    ----------
+    results : list[dict]
+        List containing the result dictionaries from each simulation case.
+    start_time : float
+        Timestamp from the beginning of the simulation (time.time()).
+    log_path : str
+        Path to the CSV file where results were saved.
+    """
+
+    total_cases = len(results)
+    successful = sum(1 for r in results if r.get("status") == "OK")
+    failed = total_cases - successful
+
+    total_time = time.time() - start_time
+    mins = int(total_time // 60)
+    secs = int(total_time % 60)
+
+    avg_time = total_time / total_cases if total_cases else 0
+    avg_mins = int(avg_time // 60)
+    avg_secs = int(avg_time % 60)
+
+    print("\n" + "=" * 60)
+    print("Simulation finished")
+    print("=" * 60)
+
+    print(f"Cases executed : {total_cases}")
+    print(f"Successful     : {successful}")
+    print(f"Failed         : {failed}")
+
+    print("\nTiming")
+    print("-" * 60)
+    print(f"Total runtime  : {mins:02d}:{secs:02d}")
+    print(f"Average case   : {avg_mins:02d}:{avg_secs:02d}")
+
+    print("\nResults saved to")
+    print("-" * 60)
+    print(log_path)
+
+    print("=" * 60 + "\n")
+
+def format_time_sec_to_minsec(seconds):
+    try:
+        seconds = float(seconds)
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f'{minutes:02d}:{secs:02d}'
+    except Exception:
+        return str(seconds)
+
+def print_simulation_results(results, start_time, log_path):
+    """
+    Print the final simulation results table and summary statistics.
+    """
+
+    print()
+    print("=" * 40)
+    print("SIMULATION RESULTS")
+    print("=" * 40)
+
+    if not results:
+        print("No results to show.")
+        print(f"Log file : {log_path}")
+        print("=" * 40)
+        return
+
+    headers = ["Case", "Status", "Time (MM:SS)"]
+    rows = []
+
+    for r in results:
+        time_val = format_time_sec_to_minsec(r.get("time_sec", ""))
+        rows.append((r.get("name", ""), r.get("status", ""), time_val))
+
+    print()
+    print(tabulate(rows, headers=headers, tablefmt="plain"))
+
+    # ---- statistics ----
+    total_cases = len(results)
+    successful = sum(1 for r in results if r.get("status") == "OK")
+    failed = total_cases - successful
+
+    total_time = time.time() - start_time
+    mins = int(total_time // 60)
+    secs = int(total_time % 60)
+
+    avg_time = total_time / total_cases if total_cases else 0
+    avg_mins = int(avg_time // 60)
+    avg_secs = int(avg_time % 60)
+
+    print("-" * 40)
+    print(f"Cases executed : {total_cases}")
+    print(f"Successful     : {successful}")
+    print(f"Failed         : {failed}")
+    print()
+    print(f"Total runtime  : {mins:02d}:{secs:02d}")
+    print(f"Average case   : {avg_mins:02d}:{avg_secs:02d}")
+    print()
+    print(f"Log file       : {log_path}")
+    print("=" * 40)

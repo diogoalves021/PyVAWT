@@ -2,6 +2,7 @@ from numba import jit
 import numpy as np
 import matplotlib.pyplot as plt
 from src.pyvawt.data_generation import get_cl_cd_neuralfoil, load_config
+#from src.pyvawt.simulation import Turbine, Environment
 
 @jit
 def abs_smooth(x, eps=1e-4):
@@ -15,12 +16,11 @@ def ksmax(values, k=300.0):
     values = np.array(values)
     return np.log(np.sum(np.exp(k * values))) / k
 
-def af(alpha, Re, Mach, turbine_index, airfoil_index, family_factor=None):
-    config = load_config()
+def af(alpha, Re, Mach, turbine, env, turbine_index, airfoil_index, family_factor=None):
 
-    rho = config['environment']['rho']
-    mu = config['environment']['mu']
-    chord = config['turbine']['chord'][airfoil_index]
+    rho = env.rho
+    mu = env.mu
+    chord = turbine.chord
 
     W = Re * mu / (rho * chord)
     CL, CD = get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index)
@@ -42,6 +42,8 @@ def Boeing_Vertol(
     tc, 
     BV_DynamicFlagL,
     BV_DynamicFlagD,
+    turbine,
+    env,
     turbine_index,
     airfoil_index,
     family_factor=0.0,
@@ -196,11 +198,11 @@ def Boeing_Vertol(
 
     # Dynamic stall corrections
     if BV_DynamicFlagL == 1:
-        CL_ref, _, CM = af(alrefL, Re, umach, turbine_index, airfoil_index, family_factor)
+        CL_ref, _, CM = af(alrefL, Re, umach, turbine, env, turbine_index, airfoil_index, family_factor)
         CL = CL_ref / (alrefL - AOA0) * (alpha - AOA0)
 
     if BV_DynamicFlagD == 1:
-        _, CD, _ = af(alrefD, Re, umach, turbine_index, airfoil_index, family_factor)
+        _, CD, _ = af(alrefD, Re, umach, turbine, env, turbine_index, airfoil_index, family_factor)
 
     return CL, CD, CM, BV_DynamicFlagL, BV_DynamicFlagD
 

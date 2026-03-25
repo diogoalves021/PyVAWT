@@ -31,3 +31,5 @@ config.md
 estrutura.md
 test/runtest_*
 *.h5
+*.pdf
+*.png

@@ -3,37 +3,19 @@ import csv
 import time
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from tabulate import tabulate
 
 from src.pyvawt.simulation import run_simulation_case
-from src.pyvawt.utils import load_config, detect_stall_angles
-
+from src.pyvawt.utils import (
+    load_config,
+    detect_stall_angles,
+    print_config,
+    print_summary,
+    parse_args,
+    print_simulation_footer,
+    print_simulation_results,
+    format_time_sec_to_minsec,
+)
 #run command: uv run python3 -m src.pyvawt.main
-
-def format_time_sec_to_minsec(seconds):
-    try:
-        seconds = float(seconds)
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        return f'{minutes:02d}:{secs:02d}'
-    except Exception:
-        return str(seconds)
-
-def print_summary_tabulate(results, log_path):
-    if not results:
-        print(f'No results to show. Log saved to: {log_path}')
-        return
-
-    headers = ['Case', 'Status', 'Time (MM:SS)']
-    rows = []
-    for r in results:
-        time_val = format_time_sec_to_minsec(r.get('time_sec', ''))
-        rows.append((r.get('name', ''), r.get('status', ''), time_val))
-
-    print()  # garantir separação do progresso
-    print(tabulate(rows, headers=headers, tablefmt='plain'))
-    print(f'\nLog saved to: {log_path}')
-
 # test/data/config.yaml src/pyvawt/config/config.yaml
 
 def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
@@ -95,7 +77,15 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
 
     >>> run_simulation()
     '''
-    config = load_config(path=config_path)
+    args = parse_args()
+    config = load_config(path=args.config or 'src/pyvawt/config/config.yaml')
+    # config = load_config(path=config_path)
+    print_summary(config)
+
+    if args.show_config:
+        print("\nFull configuration")
+        print("=" * 40)
+        print_config(config)
 
     stall_angles = {}
 
@@ -121,7 +111,10 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
                         combinations.append((ai, ti, chord, sol, vinf))
 
     total = len(combinations)
-    print(f'Initiating {total} parallel simulation cases...\n')
+    if total > 1:
+        print(f'Initiating {total} parallel simulation cases...\n')
+    else:
+        print(f'Initiating {total} parallel simulation case...\n')
 
     results = []
     start_time = time.time()
@@ -131,10 +124,37 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     # Simple progress bar with low computational cost
     def _print_progress(completed, total, start_time):
         elapsed = time.time() - start_time
+
         pct = (completed / total) * 100 if total else 100.0
-        mins = int(elapsed // 60)
-        secs = int(elapsed % 60)
-        sys.stdout.write(f'\rSimulating cases: {completed}/{total} ({pct:5.1f}%) Elapsed {mins:02d}:{secs:02d}')
+
+        elapsed_m = int(elapsed // 60)
+        elapsed_s = int(elapsed % 60)
+
+        # ---- ETA calculation ----
+        if completed > 0 and total > completed:
+            avg_time = elapsed / completed
+            eta = avg_time * (total - completed)
+
+            eta_m = int(eta // 60)
+            eta_s = int(eta % 60)
+            eta_str = f"{eta_m:02d}:{eta_s:02d}"
+        else:
+            eta_str = "00:00"
+
+        # ---- message ----
+        if total > 1:
+            msg = (
+                f"\rProgress: {completed}/{total} cases ({pct:5.1f}%) "
+                f"| Elapsed {elapsed_m:02d}:{elapsed_s:02d} "
+                f"| ETA {eta_str}"
+            )
+        else:
+            msg = (
+                f"\rProgress: {completed}/{total} case ({pct:5.1f}%) "
+                f"| Elapsed {elapsed_m:02d}:{elapsed_s:02d}"
+            )
+
+        sys.stdout.write(msg)
         sys.stdout.flush()
 
     with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
@@ -171,7 +191,7 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
         writer.writerows(results)
 
     # Summary
-    print_summary_tabulate(results, log_path)
+    print_simulation_results(results, start_time, log_path)
 
 
 if __name__ == '__main__':

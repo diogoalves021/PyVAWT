@@ -19,7 +19,7 @@ from .data_generation import get_cl_cd_neuralfoil
 from src.pyvawt.utils import load_config, get_tc_from_airfoil, detect_stall_angles
 
 # Coefficients of influence
-@jit
+# @jit
 def panelIntegration(xvec, yvec, thetavec, ifunc):
     '''
     Perform panel integration to compute influence coefficients.
@@ -122,7 +122,7 @@ def Ayintegrand(x, y, phi):
         # Occurs when integrating self; the function is symmetric around the singularity and should integrate to zero
         return 0.0
     return (v1 * math.cos(phi) + v2 * math.sin(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
-@jit
+# @jit
 def AyIJ(xvec, yvec, thetavec):
     '''
     Compute AyIJ by integrating with the Ayintegrand function.
@@ -144,7 +144,7 @@ def AyIJ(xvec, yvec, thetavec):
         The result of the Ay integration for each panel.
     '''
     return panelIntegration(xvec, yvec, thetavec, Ayintegrand)
-@jit
+# @jit
 def DxIJ(xvec, yvec, thetavec):
     '''
     Compute DxIJ by integrating with the Dxintegrand function.
@@ -610,11 +610,15 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
         v_sound = 340.0
         umach = W / v_sound
 
-        # Uses boeing_vertoling-Vertol dynamic stall correction
+        # Uses boeing-Vertol dynamic stall correction
         flagL = int(env.BV_DynamicFlagL)
         flagD = int(env.BV_DynamicFlagD)
+        
+        print('Airfoil index: ', airfoil_index)
+        #tc = get_tc_from_airfoil(config, airfoil_index)
 
-        tc = get_tc_from_airfoil(config, airfoil_index)
+        airfoil_name = config['simulation']['airfoil'][airfoil_index]
+        tc = get_tc_from_airfoil(airfoil_name)
 
         # Calls neuralfoil or interpolate aero data
         cl_static, cd_static = turbine.aero.get_cl_cd(alpha, W)
@@ -624,28 +628,40 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
         aoaStallPos = turbine.aero.aoaStallPos
         aoaStallNeg = turbine.aero.aoaStallNeg
         
-        for i in range(len(alpha)):
-
-            cl[i], cd[i], cm[i], flagL, flagD = Boeing_Vertol(
-                cl_static[i],
-                cd_static[i],
-                cm_static[i],
-                alpha[i],
-                adotnorm[i],
-                umach[i],
-                Re[i],
-                aoaStallPos,
-                aoaStallNeg,
-                0.0,
-                tc,
-                flagL,
-                flagD,
-                turbine_index,
-                airfoil_index,
-
-            )
-
-
+        for i, a in enumerate(alpha):
+            try:
+                cl[i], cd[i], cm[i], flagL, flagD = Boeing_Vertol(
+                    cl_static[i],
+                    cd_static[i],
+                    cm_static[i],
+                    a,
+                    adotnorm[i],
+                    umach[i],
+                    Re[i],
+                    aoaStallPos,
+                    aoaStallNeg,
+                    0.0,       # AOA0
+                    tc,
+                    flagL,
+                    flagD,
+                    turbine,
+                    env,
+                    turbine_index,
+                    airfoil_index,
+                )
+            except Exception as e:
+                # Professional debug message
+                error_msg = (
+                    f"\n[ERROR] Boeing-Vertol calculation failed\n"
+                    f"Index: {i}\n"
+                    f"Alpha: {a:.6f} rad\n"
+                    f"Reynolds: {Re[i]:.2f}\n"
+                    f"Thickness/Chord: {tc:.2f}\n"
+                    f"Airfoil index: {airfoil_index}\n"
+                    f"Total alpha points: {len(alpha)}\n"
+                )
+                print(error_msg)
+                raise RuntimeError(error_msg) from e
 
         env.BV_DynamicFlagL = flagL
         env.BV_DynamicFlagD = flagD
@@ -986,7 +1002,6 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
     dpi = plot_cfg.get('dpi', 300)
 
     airfoil_name = config['simulation']['airfoil'][airfoil_index]
-    config['simulation']['airfoil'] = airfoil_name
     config['turbine']['chord'] = chord
     config['turbine']['solidity'] = solidity
     config['environment']['Vinf'] = vinf
@@ -1038,18 +1053,32 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
     try:
         print(f'Simulating: {folder_name}')
         n = 20
-        tsrvec = np.linspace(1, 7, n)
+        tsrvec = np.linspace(1.0, 7.0, n)
         CPvec = np.zeros(n)
         CTvec = np.zeros(n)
         Rpvec = np.zeros(n)
         Tpvec = np.zeros(n)
         Zpvec = np.zeros(n)
 
+        cp_theta_file = os.path.join(result_dir, "cp_theta_distribution.dat")
+
+        # ==========================
+        # Saving control Cp(theta)
+        # ==========================
+
+        SAVE_ONLY_TARGET_TSR = True 
+        TARGET_TSR = 2.578947
+        TSR_TOL = 0.02
+
+        if save_results:
+            with open(cp_theta_file, "w") as f:
+                f.write("TSR\ttheta_deg\tCp_theta\n")
+
         if fixed_parameter == 'vinf':
             # Vinf is fixed thus omega is not constant for each tsr
             for i, tsr in enumerate(tsrvec):
                 turbine.Omega = vinf * tsr / r
-                CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
+                CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(
                     turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager
                 )
                 CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
@@ -1060,6 +1089,28 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
                     Zp[0],
                 )
 
+                theta_deg = np.degrees(theta)
+
+                H = 1.0
+                Sref = 2 * turbine.r * H
+
+                Cp_theta = (abs(turbine.Omega) * turbine.r * Tp) / (
+                    0.5 * env.rho * env.Vinf**3 * Sref
+                )
+
+                if abs(tsr - TARGET_TSR) < TSR_TOL:
+                    theta_plot = theta_deg.copy()
+                    cp_plot = Cp_theta.copy()
+
+                save_this_tsr = True
+
+                if SAVE_ONLY_TARGET_TSR:
+                    save_this_tsr = abs(tsr - TARGET_TSR) < TSR_TOL
+
+                if save_results and save_this_tsr:
+                    with open(cp_theta_file, "a") as f:
+                        for th, cp in zip(theta_deg, Cp_theta):
+                            f.write(f"{tsr:.6f}\t{th:.6f}\t{cp:.6f}\n")
         elif fixed_parameter == 'omega':
             # Omega is fixed thus vinf is not constant for each tsr
             for i, tsr in enumerate(tsrvec):
@@ -1094,19 +1145,34 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
                         writer.writerow(header.split('\t'))
                     writer.writerows(data_to_save.tolist())
 
-
-        plt.figure()
+        # CP X TSR
+        fig1 = plt.figure()
         plt.plot(tsrvec, CPvec)
-        plt.title(f'$C_p$ x TSR - {airfoil_name}')
+        # plt.title(f'$C_p$ x TSR - {airfoil_name}')
         plt.xlabel('TSR')
         plt.ylabel('$C_p$')
         plt.grid(True)
         plt.tight_layout()
-        if save_plot:
-            plot_filename = f'cp_curve_{airfoil_name}.{image_format}'
-            plt.savefig(os.path.join(result_dir, plot_filename), format=image_format, dpi=dpi)
 
-        plt.close()
+        if abs(tsr - 2.578947) < 0.02:
+            # CP x Azimuthal angle
+            fig2 = plt.figure()
+            plt.plot(theta_plot, cp_plot, marker='o')
+            plt.xlabel('Azimuthal angle (deg)')
+            plt.ylabel('$C_p(\\theta)$')
+            # plt.title(f'$C_p$ distribution (TSR={tsr:.2f})')
+            plt.grid(True)
+        
+        if save_plot:
+            fig1_plot_filename = f'cp_curve_{airfoil_name}.{image_format}'
+            fig1.savefig(os.path.join(result_dir, fig1_plot_filename), format=image_format, dpi=dpi)
+
+            if abs(tsr - 2.578947) < 0.02:
+                fig2_plot_filename = f'cp_theta_{airfoil_name}_tsr2p58.{image_format}'
+                fig2.savefig(os.path.join(result_dir, fig2_plot_filename), format=image_format, dpi=dpi)
+                plt.close(fig2)
+
+        plt.close(fig1)
 
         elapsed = time.time() - start_time
         return {'name': folder_name, 'status': 'OK', 'time_sec': round(elapsed, 2)}
