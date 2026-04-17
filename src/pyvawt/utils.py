@@ -257,7 +257,7 @@ def print_simulation_footer(results, start_time, log_path):
 
     print("=" * 60 + "\n")
 
-def format_time_sec_to_minsec(seconds):
+def format_time(seconds):
     try:
         seconds = float(seconds)
         minutes = int(seconds // 60)
@@ -286,7 +286,7 @@ def print_simulation_results(results, start_time, log_path):
     rows = []
 
     for r in results:
-        time_val = format_time_sec_to_minsec(r.get("time_sec", ""))
+        time_val = format_time(r.get("time_sec", ""))
         rows.append((r.get("name", ""), r.get("status", ""), time_val))
 
     print()

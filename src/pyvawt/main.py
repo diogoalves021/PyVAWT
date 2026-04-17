@@ -4,7 +4,7 @@ import time
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from src.pyvawt.simulation import run_simulation_case
+from src.pyvawt.simulation import run_simulation_case, simulate_3D_turbine
 from src.pyvawt.utils import (
     load_config,
     detect_stall_angles,
@@ -13,7 +13,7 @@ from src.pyvawt.utils import (
     parse_args,
     print_simulation_footer,
     print_simulation_results,
-    format_time_sec_to_minsec,
+    format_time,
 )
 #run command: uv run python3 -m src.pyvawt.main
 # test/data/config.yaml src/pyvawt/config/config.yaml
@@ -80,12 +80,6 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     args = parse_args()
     config = load_config(path=args.config or 'src/pyvawt/config/config.yaml')
     # config = load_config(path=config_path)
-    print_summary(config)
-
-    if args.show_config:
-        print("\nFull configuration")
-        print("=" * 40)
-        print_config(config)
 
     stall_angles = {}
 
@@ -94,6 +88,29 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
         stall_angles[airfoil_index] = (aoaStallPos, aoaStallNeg)
 
     print("Airfoil stall angles computed successfully.\n")
+
+    # ==========================
+    # CHECK 3D SIMULATION MODE
+    # ==========================
+    sim3d_cfg = config.get('simulation', {}).get('simulation3d', {})
+
+    if sim3d_cfg.get('enabled', False):
+        print("\n==============================")
+        print("3D simulation mode ENABLED")
+        print("==============================\n")
+
+        simulate_3D_turbine(config, stall_angles)
+
+        print("\n3D simulation finished.\n")
+
+        return  # 🔴 CRUCIAL: impede rodar o batch 2D
+
+    print_summary(config)
+
+    if args.show_config:
+        print("\nFull configuration")
+        print("=" * 40)
+        print_config(config)
 
     airfoil_indices = list(range(len(config['simulation']['airfoil'])))
     turbine_indices = list(range(config['simulation']['num_turbines']))

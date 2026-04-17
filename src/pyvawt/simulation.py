@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from src.pyvawt.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
 from src.pyvawt.submodels.boeing_vertol import af, Boeing_Vertol
 from .data_reading import readaerodyn
-from .utils import save_config
+from .utils import save_config, format_time
 from .data_generation import get_cl_cd_neuralfoil
 from src.pyvawt.utils import load_config, get_tc_from_airfoil, detect_stall_angles
 
@@ -386,7 +386,7 @@ class Turbine:
                 twist: float, delta: float,
                 B: int, Omega: float,
                 centerX: float, centerY: float,
-                aero_model = None):
+                 solidity:float, aero_model = None):
         self.r = r
         self.chord = chord
         self.twist = twist
@@ -395,6 +395,7 @@ class Turbine:
         self.Omega = Omega
         self.centerX = centerX
         self.centerY = centerY
+        self.solidity = solidity
         self.aero = aero_model
 
 class Aerodynamics:
@@ -564,6 +565,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
     delta = turbine.delta      
     B = turbine.B              # Number of blades
     Omega = turbine.Omega      # Rotational speed (rad/s)
+    solidity = turbine.solidity
     Vinf = env.Vinf            # Freestream wind speed
     rho = env.rho              # Air density
 
@@ -576,13 +578,13 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
 
     W = np.sqrt(Vn**2 + Vt**2) # Magnitude of relative wind velocity
     phi = np.arctan2(Vn, Vt) # Flow angle (between rotor plane and relative velocity)
-    alpha = phi - turbine.twist # Angle of attack (flow angle minus blade pitch)
+    alpha = phi - turbine.twist # Angle of attack (flow angle minus blade pitch) 
     if flow_manager is None:
         alpha_corr = alpha
     else:
         alpha_corr = flow_manager.corrected_flow(alpha, Omega, W)
     alpha = alpha_corr
-   
+    
     # Lift and drag coefficients from airfoil function
     cl = np.zeros_like(alpha)
     cd = np.zeros_like(alpha)
@@ -614,9 +616,6 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
         flagL = int(env.BV_DynamicFlagL)
         flagD = int(env.BV_DynamicFlagD)
         
-        print('Airfoil index: ', airfoil_index)
-        #tc = get_tc_from_airfoil(config, airfoil_index)
-
         airfoil_name = config['simulation']['airfoil'][airfoil_index]
         tc = get_tc_from_airfoil(airfoil_name)
 
@@ -673,8 +672,19 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
     # Normal and tangential force coefficients in the rotor frame
     cn = cl * np.cos(phi) + cd * np.sin(phi)
     ct = cl * np.sin(phi) - cd * np.cos(phi)
+    
+    # Automatically check if solidity is based on diameter or radius and use correct formulation
 
-    sigma = B * chord / r # Solidity (blade area / swept area)
+    sigma_r = B * chord / r          # baseada no raio
+    sigma_D = B * chord / (2 * r)    # baseada no diâmetro
+
+    if abs(solidity - sigma_r) < abs(solidity - sigma_D):
+        sigma = sigma_r
+        # print('Solidez baseada no raio!')
+    else:
+        sigma = 2 * solidity  # converte para definição baseada no raio
+        # print('Solidez baseada no diâmetro!')
+
     q = sigma / (4 * np.pi) * cn * (W / Vinf)**2 # Local thrust coefficient
 
     # Instantaneous forces
@@ -924,7 +934,7 @@ def initialize_turbine_and_environment(config):
     rho = environment_params['rho']
     mu = environment_params['mu']
 
-    turbine = Turbine(r, chord, twist, delta, B, Omega, centerX, centerY)
+    turbine = Turbine(r, chord, twist, delta, B, Omega, centerX, centerY, solidity)
     env = Environment(Vinf, rho, mu)
 
     aero_params = config.get('aero', {})
@@ -1043,6 +1053,10 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
     aero_method = config.get('aero', {}).get('method', 'neuralfoil')
     if aero_method == 'neuralfoil':
         turbine.aero = NeuralFoilAerodynamics(turbine_index=turbine_index, airfoil_index=airfoil_index)
+
+    # Prevent crash
+    if stall_angles is None:
+        raise ValueError('Stall angles must be provided')
 
     # Pass airfoil stall angles to the class turbine
     aoaStallPos, aoaStallNeg = stall_angles[airfoil_index]
@@ -1175,7 +1189,14 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
         plt.close(fig1)
 
         elapsed = time.time() - start_time
-        return {'name': folder_name, 'status': 'OK', 'time_sec': round(elapsed, 2)}
+        return {'name': folder_name, 'status': 'OK', 'time_sec': round(elapsed, 2),
+                'tsr': tsrvec,
+                'CP': CPvec,
+                'CT': CTvec,
+                'Tp': Tpvec,
+                'Rp': Rpvec,
+                'Zp': Zpvec
+                }
 
     except Exception as e:
         return {
@@ -1184,7 +1205,156 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
             'time_sec': round(time.time() - start_time, 2),
             'traceback': traceback.format_exc(limit=2),
         }
+
+def simulate_3D_turbine(base_config, stall_angles):
+    """
+    Wrapper para rodar a simulação 3D da turbina usando várias fatias de altura.
+    Puxa todos os parâmetros diretamente do arquivo de configuração YAML.
+    """
+    import copy
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
     
+    start_time_3d = time.time()
+
+    total_CP = None
+    power_total = None
+
+    config_no_output = copy.deepcopy(base_config)
+    config_no_output['output']['save'] = False
+    config_no_output['output']['save_plot'] = False
+    config_no_output['output']['save_config'] = False
+
+    sim3d_cfg = base_config.get('simulation', {}).get('simulation3d', {})
+    
+    # Checa se simulação 3D está habilitada
+    if not sim3d_cfg.get('enabled', False):
+        print("Simulação 3D desabilitada. Rodando simulação 2D padrão...")
+        # Pega parâmetros padrão do YAML
+        airfoil_index = 0
+        turbine_index = 0
+        chord = base_config['turbine']['chord'][0]
+        solidity = base_config['turbine']['solidity'][0]
+        vinf = base_config['environment']['Vinf'][0]
+        run_simulation_case(
+            params=(airfoil_index, turbine_index, chord, solidity, vinf),
+            base_config=base_config,
+            stall_angles=stall_angles
+        )
+        return
+
+    # Pega parâmetros do YAML
+    height = sim3d_cfg.get('height', 20.0)
+    n_slices = sim3d_cfg.get('n_slices', 20)
+    velocity_profile = sim3d_cfg.get('velocity_profile', 'constant')
+
+    airfoil_index = sim3d_cfg.get('airfoil_index', 0)
+    turbine_index = sim3d_cfg.get('turbine_index', 0)
+    chord = base_config['turbine']['chord'][0]
+    solidity = base_config['turbine']['solidity'][0]
+
+    dz = height / n_slices
+    
+    folder_name_3D = f"3D_H{height}_Ns{n_slices}"
+    result_dir_3D = os.path.join('src/results/results_3D', folder_name_3D)
+    os.makedirs(result_dir_3D, exist_ok=True)
+    
+    tsrvec_global = None
+   
+    rho = base_config['environment']['rho']
+    r = base_config['turbine']['r']
+
+    Vr = base_config['environment']['Vinf'][0]
+    Zr = height / 2
+    alpha = 0.13 # [0.11, 0.15] 
+
+    for i in range(n_slices):
+        slice_start = time.time()
+
+        z = dz / 2 + i * dz
+        vinf = Vr * (z / Zr) ** alpha
+
+        print(f"Simulating slice {i+1}/{n_slices} at z={z:.2f} m")
+
+        result = run_simulation_case(
+            params=(airfoil_index, turbine_index, chord, solidity, vinf),
+            base_config=config_no_output,
+            stall_angles=stall_angles
+        )
+
+        slice_time = time.time() - slice_start
+        avg_time = (time.time() - start_time_3d) / (i + 1)
+        remaining = avg_time * (n_slices - (i + 1))
+        print(f"Time slice {i+1}: {format_time(slice_time)} | ETA: {format_time(remaining)}")
+
+
+        if result['status'] != 'OK':
+            print(f"Error at slice {i}: {result['status']}")
+            continue
+
+        CP = np.array(result['CP'])
+
+        A_slice = 2 * r * dz
+
+        power_slice = CP * (0.5 * rho * vinf**3 * A_slice)
+
+        if power_total is None:
+            power_total = power_slice.copy()
+            tsrvec_global = np.array(result['tsr'])
+        else:
+            power_total += power_slice
+
+        '''if total_CP is None:
+            total_CP = CP.copy()
+            tsrvec_global = np.array(result['tsr'])
+        else:
+            total_CP += CP '''
+
+    print(f'Time slice {i+1}: {format_time(slice_time)}')
+    # Power and Cp 3d
+    # Cp_3D = total_CP / n_slices 
+    A_total = 2 * r * height
+    P_available = 0.5 * rho * Vr**3 * A_total
+
+    Cp_3D = power_total / P_available
+
+    print("[DEBUG] Shape TSR:", tsrvec_global.shape)
+
+    # Save results
+    print("\n[DEBUG] Salvando resultados 3D em:")
+    print(result_dir_3D)
+
+    data_to_save = np.column_stack((tsrvec_global, Cp_3D))
+    header = "TSR\tCp_3D\tCp_total"
+    filepath = os.path.join(result_dir_3D, "results_3D.dat")
+    np.savetxt(filepath, data_to_save, header=header, fmt='%.6f', delimiter='\t')
+
+    slices_info = []
+
+    # Save z
+    slices_info.append({
+        "z": z,
+        "CP": CP.copy()
+    })
+    
+    elapsed_3d = time.time() - start_time_3d
+    print(f'\n⏱ Total simulation time: {format_time(elapsed_3d)}')
+
+    from .utils import save_config
+
+    save_config(base_config, os.path.join(result_dir_3D, 'config_used.yaml'))
+
+    plt.figure()
+    plt.plot(tsrvec_global, Cp_3D)
+    plt.xlabel("TSR")
+    plt.ylabel("$C_p$ 3D")
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.savefig(os.path.join(result_dir_3D, "cp_curve_3D.png"), dpi=300)
+    plt.close()
+
 # ======== Auxiliary Methods =========
 
 def trapz(x, y):
