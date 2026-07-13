@@ -15,7 +15,7 @@ turbine:
   ntheta: 36
 environment:
   Vinf:
-  - 6.23
+  - 6.23 #parametro variado no experimento de sanvito
   rho: 1.225
   mu: 1.7894e-05
 simulation:
@@ -31,7 +31,10 @@ simulation:
   simulation3d:
     enabled: true
     height: 3.0 
-    n_slices: 3
+    n_slices: 20
+    velocity_profile: power_law # constant or power_law
+    tip_loss: false #true: on; false: off
+    discretization_power: 1 # 1: linear, 2: power law
 aero:
   method: neuralfoil
   model_size: large

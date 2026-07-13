@@ -505,7 +505,7 @@ class Environment:
         self.BV_DynamicFlagD = 0
 
 def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
-                config, turbine_index, airfoil_index, flow_manager):
+                config, turbine_index, airfoil_index, flow_manager, z=None, H=None):
     '''
     Calculate aerodynamic forces and performance coefficients for a Vertical Axis Wind Turbine (VAWT)
     using the actuator cylinder method.
@@ -557,7 +557,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
     - The aerodynamic coefficient calculation method is defined by ``config['aero']['method']``.
     - Two correction models for the induction factor ``ka`` are implemented: a piecewise analytical model (active)
       and an alternative polynomial fit (commented out for reference).
-    '''
+    ''' 
     # Unpacking turbine and environment parameters
     r = turbine.r              # Rotor radius
     chord = turbine.chord      # Blade chord length
@@ -584,7 +584,7 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
     else:
         alpha_corr = flow_manager.corrected_flow(alpha, Omega, W)
     alpha = alpha_corr
-    
+ 
     # Lift and drag coefficients from airfoil function
     cl = np.zeros_like(alpha)
     cd = np.zeros_like(alpha)
@@ -592,6 +592,8 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
 
     config = load_config(path='src/pyvawt/config/config.yaml')
     use_dynamic_stall = config['aero'].get('dynamic_stall', True)
+    use_tip_loss = config["simulation"]["simulation3d"].get("tip_loss", False)
+
 
     if use_dynamic_stall:
 
@@ -673,8 +675,24 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
     cn = cl * np.cos(phi) + cd * np.sin(phi)
     ct = cl * np.sin(phi) - cd * np.cos(phi)
     
-    # Automatically check if solidity is based on diameter or radius and use correct formulation
+    if use_tip_loss and z is not None and H is not None:
+        cn_corr, ct_corr, F = apply_tip_loss(cn, ct, z, H, turbine, env, Vinf, uvec)
+        
+        F_values = []
+        F_values.append(F)
 
+        print(
+            "Tip-loss:",
+            f"min={np.min(F_values):.3f}",
+            f"mean={np.mean(F_values):.3f}",
+            f"max={np.max(F_values):.3f}",
+        )
+
+    else:
+        cn_corr = cn
+        ct_corr = ct 
+  
+    # Automatically check if solidity is based on diameter or radius and use correct formulation
     sigma_r = B * chord / r          # baseada no raio
     sigma_D = B * chord / (2 * r)    # baseada no diâmetro
 
@@ -689,9 +707,9 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
 
     # Instantaneous forces
     qdyn = 0.5 * rho * W**2 # Dynamic pressure at each azimuthal position
-    Rp = -cn * qdyn * chord # Radial (normal) force per unit span
-    Tp = ct * qdyn * chord / np.cos(delta) # Tangential force per unit span (contributes to torque)
-    Zp = -cn * qdyn * chord * np.tan(delta) # Axial force due to blade tilt
+    Rp = -cn_corr * qdyn * chord # Radial (normal) force per unit span
+    Tp = ct_corr * qdyn * chord / np.cos(delta) # Tangential force per unit span (contributes to torque)
+    Zp = -cn_corr * qdyn * chord * np.tan(delta) # Axial force due to blade tilt
 
 
     # Nonlinear correction factor for induction (ka)
@@ -717,22 +735,75 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
 
     elif a > 0.15:
         ka = 1/(1-a)*(0.65 + 0.35*math.exp(-4.5*(a-0.15)))
-    '''  
+    #'''  
 
     # Power coefficient (CP)
-    H = 1.0                    # Rotor height (unit length)
-    Sref = 2 * r * H           # Swept area
+    Href = 1.0                    # Rotor height (unit length)
+    Sref = 2 * r * Href           # Swept area
     Q = r * Tp                 # Torque at each position
     P = abs(Omega) * B / (2 * np.pi) * np.trapz(Q, x=thetavec)  # Total power
     CP = P / (0.5 * rho * Vinf**3 * Sref)  # Power coefficient
 
     return q, ka, CT, CP, Rp, Tp, Zp, alpha, W
+'''
+def apply_tip_loss(cn, ct, z, H, turbine, env, Vinf, uvec):
+    B = turbine.B
+    Omega = abs(turbine.Omega)
 
+    if Omega < 1e-6:
+        return cn, ct
+    
+    # Omega_ref = 5.8 * Vinf / turbine.r # The constant is the optimal TSR
+    Omega_ref = Omega
+    Ve = Vinf * (1 + np.mean(uvec))  # change this to the velocity between disks ; MUDEI PARA APENAS VINF PARA TESTAR E FOI A MELHOR CURVA ATE AGORA
+    s = np.pi * Ve / (B * Omega_ref)
+
+    g = np.pi * (H/2 - abs(z)) / s
+
+    val = np.exp(-g)
+    val = np.clip(val, 0.0, 1.0)
+
+    F = (2/np.pi) * np.arccos(val)
+    F = np.clip(F, 0.0, 1.0)
+
+    return F * cn, F * ct, F
+# Function under testing
+'''
+def apply_tip_loss(cn, ct, z, H, turbine, env, Vinf, uvec,
+                   lambda_ref=5.8, alpha=0.1, Fmin=0.87, g_scale=0.35):
+    B = turbine.B
+    Omega = abs(turbine.Omega)
+    Vinf = max(Vinf, 1e-12)
+
+    # velocidade convectiva simples e estável
+    Ve = Vinf
+
+    # TSR operacional
+    lam = Omega * turbine.r / Vinf
+
+    # TSR efetivo suavizado:
+    # evita que o tip-loss fique brutal em TSR baixo
+    lam_eff = alpha * lam + (1.0 - alpha) * lambda_ref
+
+    Omega_eff = lam_eff * Vinf / turbine.r
+
+    s = np.pi * Ve / (B * Omega_eff)
+
+    span_dist = max(H / 2 - abs(z), 0.0)
+    g = g_scale*np.pi*span_dist/s 
+
+    val = np.exp(-g)
+    val = np.clip(val, 0.0, 1.0)
+
+    F = (2 / np.pi) * np.arccos(val)
+    F = np.clip(F, Fmin, 1.0)
+
+    return F * cn, F * ct, F
 #------------------------------------
 #
 #-------- solve the system --------
 
-def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager):
+def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager, z=None, H=None):
     '''
     Compute the residual for the actuator-cylinder equations of a single VAWT.
 
@@ -768,14 +839,14 @@ def residual(w, A, theta, turbine, env, config, turbine_index, airfoil_index, fl
     v = w[ntheta:]
 
     # Compute radial force, returns q (length ntheta) and the scalar kappa (ka)
-    q, ka, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager)
+    q, ka, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager, z, H)
 
     # Build k_mult twice (for u- and v-equations)
     kmult = np.full(2 * ntheta, ka)
 
     return (A @ q) * kmult - w
 
-def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager):
+def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z=None, H=None):
     '''
     Solve the actuator-cylinder model for a single VAWT turbine.
 
@@ -820,14 +891,14 @@ def actuatorcylinder(turbine, env, ntheta, config, turbine_index, airfoil_index,
 
     w0 = np.zeros(2 * len(theta))
 
-    sol = root(residual, w0, args=(A, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager), tol=1e-6)
+    sol = root(residual, w0, args=(A, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager, z, H), tol=1e-6)
     if not sol.success:
         raise RuntimeError(f'Solver did not converge: {sol.message}')
 
     w = sol.x
     u, v = w[:len(theta)], w[len(theta):]
 
-    q, ka, CT, CP, Rp, Tp, Zp, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager)
+    q, ka, CT, CP, Rp, Tp, Zp, *_ = radialforce(u, v, theta, turbine, env, config, turbine_index, airfoil_index, flow_manager, z, H)
     
     return CT, CP, Rp, Tp, Zp, theta
 
@@ -949,7 +1020,7 @@ def initialize_turbine_and_environment(config):
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
-def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
+def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z=None, H=None):
     '''
     Executes a single aerodynamic simulation for a vertical-axis wind turbine (VAWT)
     using the provided parameters and base configuration.
@@ -1093,7 +1164,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
             for i, tsr in enumerate(tsrvec):
                 turbine.Omega = vinf * tsr / r
                 CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(
-                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager
+                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z, H
                 )
                 CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
                     CP,
@@ -1105,8 +1176,8 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
 
                 theta_deg = np.degrees(theta)
 
-                H = 1.0
-                Sref = 2 * turbine.r * H
+                Href = 1.0
+                Sref = 2 * turbine.r * Href
 
                 Cp_theta = (abs(turbine.Omega) * turbine.r * Tp) / (
                     0.5 * env.rho * env.Vinf**3 * Sref
@@ -1131,7 +1202,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None):
                 turbine.Omega = angular_velocity
                 env.Vinf = turbine.Omega * r / tsr
                 CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
-                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager
+                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z, H
                 )
                 CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
                     CP,
@@ -1213,8 +1284,6 @@ def simulate_3D_turbine(base_config, stall_angles):
     """
     import copy
     import os
-    import numpy as np
-    import matplotlib.pyplot as plt
     
     start_time_3d = time.time()
 
@@ -1253,8 +1322,8 @@ def simulate_3D_turbine(base_config, stall_angles):
     turbine_index = sim3d_cfg.get('turbine_index', 0)
     chord = base_config['turbine']['chord'][0]
     solidity = base_config['turbine']['solidity'][0]
-
-    dz = height / n_slices
+    velocity_profile = sim3d_cfg.get('velocity_profile', 'power_law')
+    # dz = height / n_slices
     
     folder_name_3D = f"3D_H{height}_Ns{n_slices}"
     result_dir_3D = os.path.join('src/results/results_3D', folder_name_3D)
@@ -1268,20 +1337,45 @@ def simulate_3D_turbine(base_config, stall_angles):
     Vr = base_config['environment']['Vinf'][0]
     Zr = height / 2
     alpha = 0.13 # [0.11, 0.15] 
+    
+    # parâmetro de controle (quanto maior, mais concentra no topo a distribuição de slices)
+    beta = sim3d_cfg.get('discretization_power', 2.0) #b = 1: linear discretization; b = 2: power_law discretization
+    print(f'Beta: {beta}')
+    eta = np.linspace(0, 1, n_slices + 1)
+    z_nodes = height * (1 - (1 - eta)**beta)
+    z_centers = 0.5 * (z_nodes[:-1] + z_nodes[1:])
+    dz_array = z_nodes[1:] - z_nodes[:-1]
 
     for i in range(n_slices):
         slice_start = time.time()
+        
+        z = z_centers[i]
+        dz = dz_array[i]
 
-        z = dz / 2 + i * dz
-        vinf = Vr * (z / Zr) ** alpha
+        # z = dz / 2 + i * dz # Distribuição igual de slices ao longo da altura da turbina
+        if velocity_profile == 'power_law':
+            vinf = Vr * (z / Zr) ** alpha # velocity profile
+        elif velocity_profile == 'constant':
+            vinf = Vr 
+            print("PERFIL DE VELOCIDADE CONSTANTE!")
+        else:
+            raise ValueError(f'Unknown velocity profile: {velocity_profile}')
+
+
+        z_centered = z - height / 2
 
         print(f"Simulating slice {i+1}/{n_slices} at z={z:.2f} m")
 
         result = run_simulation_case(
             params=(airfoil_index, turbine_index, chord, solidity, vinf),
             base_config=config_no_output,
-            stall_angles=stall_angles
+            stall_angles=stall_angles,
+            z=z_centered,
+            H=height
         )
+        
+        print(i, result.get("status"))
+        print("CP:", result.get("CP"))
 
         slice_time = time.time() - slice_start
         avg_time = (time.time() - start_time_3d) / (i + 1)
@@ -1293,7 +1387,7 @@ def simulate_3D_turbine(base_config, stall_angles):
             print(f"Error at slice {i}: {result['status']}")
             continue
 
-        CP = np.array(result['CP'])
+        CP = np.array(result['CP']) 
 
         A_slice = 2 * r * dz
 

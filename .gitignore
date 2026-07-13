@@ -33,3 +33,6 @@ test/runtest_*
 *.h5
 *.pdf
 *.png
+*.drawio
+*.odt
+*.zip
