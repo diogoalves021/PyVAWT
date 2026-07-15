@@ -253,24 +253,18 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     #Direção de rotação
     rotation = np.sign(Omega)
 
-    uvec = np.zeros(36)
-    vvec = np.zeros(36)
+    #uvec = np.zeros(36)
+    #vvec = np.zeros(36)
 
     #Componentes de velocidade e ângulos
     Vn = Vinf * (1.0 + uvec) * np.sin(thetavec) - Vinf * vvec * np.cos(thetavec)
     Vt = (rotation * (Vinf * (1.0 + uvec) * np.cos(thetavec) + Vinf * vvec * np.sin(thetavec)) + abs(Omega) * r)
-    print(f'Vn: {Vn[:5]}')
-    print(f'Vt: {Vt[:5]}')
     W = np.sqrt(Vn**2 + Vt**2)
-    print(f'W: {W[:5]}')
     phi = np.arctan2(Vn, Vt)
-    print(f'phi: {phi[:5]}')
     alpha = phi - turbine.twist
-    print(f'alpha: {alpha[:5]}')
 
     #Coeficientes aerodinâmicos (cl, cd) a partir do perfil
     cl, cd = turbine.af(alpha)
-    print(f'cl: {cl[:5]}, cd: {cd[:5]}')
 
     #Rotação dos coeficientes de força
     cn = cl * np.cos(phi) + cd * np.sin(phi)
@@ -305,19 +299,9 @@ def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment):
     #Coeficiente de potência
     H = 1.0 #Altura por unidade
     Sref = 2 * r * H
-    #print(f'Valor de r: {r} e valor de Tp: {Tp}')
     Q = r * Tp
     P = abs(Omega) * B / (2 * np.pi) * np.trapz(Q, x=thetavec)
-    #print('Valor de P: ', P)
     CP = P / (0.5 * rho * Vinf**3 * Sref)
-    #print('Valor de CP: ', CP)
-
-    #print(f"\n Dentro de radialforce():")
-    #print(f"    CT calculado: {CT}")
-    #print(f"    CP calculado: {CP} (deveria ser <= 1!)")
-    #print(f"    Rp (raio de pressão): {Rp[:5]} ...")
-    #print(f"    Tp (torque): {Tp[:5]} ...")
-
 
     return q, ka, CT, CP, Rp, Tp, Zp
 
@@ -337,7 +321,7 @@ def residual(w, A, theta, k, turbines, env):
         idx = slice((i - 1) * ntheta, i * ntheta)
         u = w[idx]
 
-        idx_v = slice(ntheta * nturbines + (i - 1) * ntheta, ntheta * nturbines + 1 * ntheta)
+        idx_v = slice(ntheta * nturbines + (i - 1) * ntheta, ntheta * nturbines + i * ntheta)
         v = w[idx_v]
 
         q[idx], ka, *_ = radialforce(u, v, theta, turbines[i - 1], env)
@@ -350,104 +334,108 @@ def residual(w, A, theta, k, turbines, env):
 
     return (A @ q) * kmult - w
 
-def actuatorcylinder(turbines, env, ntheta):
-    #List comprehensions
+def actuatorcylinder(turbines, env, ntheta, w0=None):
+    # List comprehensions para extração geométrica
     centerX = np.array([turbine.centerX for turbine in turbines])
     centerY = np.array([turbine.centerY for turbine in turbines])
     radii = np.array([turbine.r for turbine in turbines])
 
-    #Montar matrizes globais
+    # Montar matrizes de indução globais
     Ax, Ay, theta = matrixAssemble(centerX, centerY, radii, ntheta)
 
-    #Configuração inicial
+    # Configuração inicial de dimensões
     ntheta = len(theta)
     nturbines = len(turbines)
     tol = 1e-6
+    
+    # Prealocação de arrays de saída
     CT = np.zeros(nturbines)
     CP = np.zeros(nturbines)
     Rp = np.zeros((ntheta, nturbines))
     Tp = np.zeros((ntheta, nturbines))
     Zp = np.zeros((ntheta, nturbines))
-    q = np.zeros(ntheta)
-
-    #Fatores de correção não lineares
     k = np.zeros(nturbines)
 
-    #Resolver para cada turbina individualmente
-    for i in range(nturbines):
-        w0 = np.zeros(ntheta * 2)
-        #idx = slice(i * ntheta, (i + 1) * ntheta)
-        idx = np.arange(i * ntheta, (i + 1) * ntheta)
+    # =========================================================================
+    # 🔴 OTIMIZAÇÃO: ESTRUTURA CONDICIONAL DO WARM START
+    # =========================================================================
+    
+    # Se já temos o Warm Start do TSR anterior E o sistema possui múltiplas turbinas:
+    # PULAMOS o solver individual de cada turbina inteiramente!
+    if w0 is not None and nturbines > 1:
+        w0_coupled = w0
+        # Apenas calculamos explicitamente o fator k inicial (avaliação direta, sem root solver)
+        for i in range(nturbines):
+            u_start = w0[i * ntheta : (i + 1) * ntheta]
+            v_start = w0[ntheta * nturbines + i * ntheta : ntheta * nturbines + (i + 1) * ntheta]
+            _, k[i], *_ = radialforce(u_start, v_start, theta, turbines[i], env)
+            
+    else:
+        # CASO CONTRÁRIO: Primeira iteração (w0=None) OU caso de uma única turbina (nturbines=1)
+        w0_coupled = np.zeros(nturbines * ntheta * 2) if w0 is None else w0
+        
+        for i in range(nturbines):
+            # Se for caso mono-turbina com warm start, o w0_single é o próprio w0 recebido
+            if w0 is not None and nturbines == 1:
+                w0_single = w0
+            else:
+                w0_single = np.zeros(ntheta * 2)
 
-        #Definir o resíduo para o problema de uma única turbina
-        def resid_single(x):
-            return residual(
-                x,
-                #np.block([[Ax[idx, idx]], [Ay[idx, idx]]]),
-                np.vstack([Ax[idx][:, idx], Ay[idx][:, idx]]),
-                theta,
-                [1.0],
-                #turbines[i:i + 1],
-                [turbines[i]],
-                env
-            )
-        #Resolver sistema não linear
-        #result = root(resid_single, w0, tol=tol)
-        result = root(resid_single, w0, method='lm', tol=tol)
-        w = result.x
-        if not result.success:
-            print(f'Solver não convergiu para a turbina {i + 1}. Mensagem: {result.message}')
+            idx = np.arange(i * ntheta, (i + 1) * ntheta)
 
-        #print(f"\n🔍 Dentro de actuatorcylinder() para turbina {i+1}:")
-        #print(f"   ➤ Theta: {theta[:5]} ...")
-        #print(f"   ➤ Parâmetros da turbina: r={turbines[i].r}, Omega={turbines[i].Omega}, B={turbines[i].B}")
-        #print(f"   ➤ Parâmetros do ambiente: Vinf={env.Vinf}, rho={env.rho}")
+            # Definir o resíduo para o problema de uma única turbina isolada
+            def resid_single(x):
+                return residual(
+                    x,
+                    np.vstack([Ax[idx][:, idx], Ay[idx][:, idx]]),
+                    theta,
+                    [1.0],
+                    [turbines[i]],
+                    env
+                )
+            
+            # Resolve o sistema individual
+            result = root(resid_single, w0_single, method='lm', tol=tol)
+            w_single = result.x
+            if not result.success:
+                print(f'Solver não convergiu para a turbina {i + 1}. Mensagem: {result.message}')
 
-        #Separar componentes
-        u = w[:ntheta]
-        v = w[ntheta:]
-        q, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
+            # Separar componentes obtidas e extrair o fator k
+            u = w_single[:ntheta]
+            v = w_single[ntheta:]
+            _, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
+            
+            # Se for a primeira iteração de um caso multi-turbina, montamos o w0_coupled inicial
+            if nturbines > 1:
+                w0_coupled[i * ntheta : (i + 1) * ntheta] = u
+                w0_coupled[ntheta * nturbines + i * ntheta : ntheta * nturbines + (i + 1) * ntheta] = v
 
-    if nturbines == 1:
-        return CT, CP, Rp, Tp, Zp, theta
+        # Se o parque contiver apenas uma turbina, o problema físico termina aqui
+        if nturbines == 1:
+            return CT, CP, Rp, Tp, Zp, theta, w_single
 
-    #Resolver sistema acoplado
-    w0 = np.zeros(nturbines * ntheta * 2)
-
-    #Definir resíduo para o sistema acoplado
+    # ==========================================
+    # Resolver sistema acoplado (Apenas para nturbines > 1)
+    # ==========================================
     def resid_multiple(x):
-        #return residual(x, np.block([[Ax], [Ay]]), theta, k, turbines, env)
         return residual(x, np.vstack([Ax, Ay]), theta, k, turbines, env)
     
-    #result = root(resid_multiple, w0, tol=tol)
-    result = root(resid_multiple, w0, method='lm', tol=tol)
-    w = result.x
+    # Executa o solver acoplado global aproveitando o Warm Start direto (w0_coupled)
+    result = root(resid_multiple, w0_coupled, method='lm', tol=tol)
+    w_coupled = result.x
     if not result.success:
         print(f'Solver não convergiu para o sistema acoplado. Mensagem: {result.message}')
     
-    #for i in range(1, nturbines + 1):
+    # Pós-processamento final para extração dos coeficientes acoplados
     for i in range(nturbines): 
-        #idx = list(range((i - 1) * ntheta, i * ntheta))
         idx = list(range(i * ntheta, (i + 1) * ntheta)) 
 
-        u = w[idx]
-        v = w[ntheta * nturbines + np.array(idx)]
+        u = w_coupled[idx]
+        v = w_coupled[ntheta * nturbines + np.array(idx)]
 
-        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i - 1], env)
-
-    '''#Processar resultados para cada turbina
-    for i in range(nturbines):
-        #idx = slice(i * ntheta, (i + 1) * ntheta)
-        idx = np.arange(i * ntheta, (i + 1) * ntheta)
-        u = w[idx]
-
-        #idx_v = slice(ntheta * nturbines + i * ntheta, ntheta * nturbines + (i + 1) * ntheta)
-        idx_v = np.arange(ntheta * nturbines + i * ntheta, ntheta * nturbines + (i + 1) * ntheta)
-        v = w[idx_v]
         _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
-    '''
-    return CT, CP, Rp, Tp, Zp, theta
 
+    return CT, CP, Rp, Tp, Zp, theta, w_coupled
 
 #------------------------------------
 #-------- Métodos Auxiliares --------

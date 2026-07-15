@@ -6,9 +6,9 @@
         "chord": 0.25,
         "B": 3,
         "solidity": 0.25,
-        "centerX": 0,
-        "centerY": 0,
-        "Omega": 0.0,
+        "centerX": [0.0, 14.0, 28.0],
+        "centerY": [6.0, 0.0, 6.0],
+        "Omega": 2.0,
         "ntheta": 36
     },
     "environment": {
@@ -17,8 +17,8 @@
         "mu": 1.7894e-5
     },
     "simulation": {
-        "var_omega_vinf": 0,
-        "num_turbines": 1,
-        "aero_profile": "data/NACA_0012_mod.dat"
+        "var_omega_vinf": 1,
+        "num_turbines": 2,
+        "aero_profile": "src/data/experimental/NACA_0012_mod.dat"
     }
 }

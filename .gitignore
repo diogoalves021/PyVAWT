@@ -14,3 +14,13 @@ theta*.h5
 uv.lock
 .python-version
 src/start_sim.py
+*.png
+*.pdf
+*.drawio
+*.zip
+*.odt
+results*
+docs
+documentation/
+examples*
+scripts/
