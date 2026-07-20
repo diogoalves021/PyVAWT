@@ -1,5 +1,5 @@
 # ==============================================================================
-# Turbine Simulation Configuration File
+# PyVAWT Configuration File for Single Turbine
 # ==============================================================================
 
 turbine:
@@ -24,6 +24,11 @@ environment:
   mu: 1.7894e-05           # Dynamic viscosity (Pa*s)
 
 solver:
+  tsr:
+    min: 4.0
+    max: 7.0
+    n_points: 10
+
   method: neuralfoil     # "neuralfoil" or "file". It's the way the cl and cd is obtained.
   fixed_parameter: vinf # "omega" or "vinf"
   
@@ -62,3 +67,10 @@ output:
   plot_image:
     format: png          # "png" or "eps"
     dpi: 300               # Image resolution (Dots Per Inch)
+
+  cp_theta:
+    enabled: true            # Habilita/Desabilita o processamento de Cp(theta)
+    target_tsr: 2.58         # TSR alvo para extração da curva azimutal
+    tolerance: 0.7          # Tolerância de busca para encontrar o TSR
+    save_data: true          # Salva o arquivo cp_theta_distribution.dat
+    save_plot: true          # Salva a imagem do gráfico Cp x Theta

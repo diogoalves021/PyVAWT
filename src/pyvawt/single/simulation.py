@@ -1036,10 +1036,11 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
         ValueError: If `stall_angles` is not provided.
         ValueError: If `config['solver']['fixed_parameter']` is not set to 'vinf' or 'omega'.
     """
-    airfoil_index, turbine_index, chord, solidity, vinf = params
-    config = copy.deepcopy(base_config)  # Deep copy for isolation
 
-    # Extract output parameters matching the new configuration file layout
+    airfoil_index, turbine_index, chord, solidity, vinf = params
+    config = copy.deepcopy(base_config)
+
+    # Output settings
     output_cfg = config.get('output', {})
     save_results = output_cfg.get('save', True)
     save_config_used = output_cfg.get('save_config', True)
@@ -1052,6 +1053,25 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     plot_cfg = output_cfg.get('plot_image', {})
     image_format = plot_cfg.get('format', 'png')
     dpi = plot_cfg.get('dpi', 300)
+
+    # 1. Check if running in 3D simulation mode
+    is_3d_mode = config.get('simulation3d', {}).get('enabled', False) or (z is not None)
+
+    # 2. Extract Cp(theta) configurations
+    cp_theta_cfg = output_cfg.get('cp_theta', {})
+    cp_theta_requested = cp_theta_cfg.get('enabled', False)
+    
+    # BUSINESS RULE: Enable cp_theta only if requested AND NOT in 3D mode
+    cp_theta_enabled = cp_theta_requested and not is_3d_mode
+
+    # Informative log if cp_theta was requested during a 3D run
+    if cp_theta_requested and is_3d_mode:
+        print("--> [INFO] cp_theta extraction bypassed: Feature is only supported in 2D mode.", flush=True)
+
+    # Cp(theta) settings
+    target_tsr = cp_theta_cfg.get('target_tsr', 2.58)
+    save_cp_theta_data = cp_theta_cfg.get('save_data', True)
+    save_cp_theta_plot = cp_theta_cfg.get('save_plot', True)
 
     # Extract airfoil and base turbine properties
     airfoil_name = config['solver']['neuralfoil']['airfoil'][airfoil_index]
@@ -1074,7 +1094,6 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     else:
         flow_manager = None
 
-    # Replace decimal points with 'p' for valid directory naming
     def fmt(val):
         return str(val).replace('.', 'p')
 
@@ -1087,19 +1106,18 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
 
     if save_results or save_config_used or save_plot:
         os.makedirs(result_dir, exist_ok=True)
+        print(f"--> [DEBUG] Salvo em: {os.path.abspath(result_dir)}")
 
     if save_config_used:
         from src.pyvawt.single.utils import save_config
         save_config(config, os.path.join(result_dir, 'config_used.yaml'))
 
-    # Defensive helper to extract scalars from arrays/lists (3D cases)
     def _to_scalar(val):
         try:
             return val[0]
         except (TypeError, IndexError):
             return val
 
-    # Initialize turbine and environment objects
     turbine, env, _, _, _, _, _ = initialize_turbine_and_environment(config)
     
     fixed_parameter = config['solver']['fixed_parameter']
@@ -1119,84 +1137,74 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     start_time = time.time()
     try:
         print(f'Simulating: {folder_name}')
-        n = 20
-        tsrvec = np.linspace(1.0, 7.0, n)
-        CPvec = np.zeros(n)
-        CTvec = np.zeros(n)
-        Rpvec = np.zeros(n)
-        Tpvec = np.zeros(n)
-        Zpvec = np.zeros(n)
+
+        tsr_cfg = config.get('solver', {}).get('tsr', {})
+        tsr_min = float(tsr_cfg.get('min', 1.0))
+        tsr_max = float(tsr_cfg.get('max', 7.0))
+        n = int(tsr_cfg.get('n_points', 20))
+        tsrvec = np.linspace(tsr_min, tsr_max, n)
+        CPvec, CTvec = np.zeros(n), np.zeros(n)
+        Rpvec, Tpvec, Zpvec = np.zeros(n), np.zeros(n), np.zeros(n)
+
+        # --- SELEÇÃO ROBUSTA DO TSR ALVO ---
+        # Identifica automaticamente o índice do TSR mais próximo de target_tsr
+        if cp_theta_enabled:
+            target_idx = int(np.argmin(np.abs(tsrvec - target_tsr)))
+            actual_target_tsr = tsrvec[target_idx]
+        else:
+            target_idx = -1
+            actual_target_tsr = None
 
         cp_theta_file = os.path.join(result_dir, "cp_theta_distribution.dat")
+        should_write_cp_theta_file = save_results and cp_theta_enabled and save_cp_theta_data
 
-        # Intelligent filter for Cp(theta) data saving
-        SAVE_ONLY_TARGET_TSR = True 
-        TARGET_TSR = 2.578947
-        TSR_TOL = 0.02
-
-        if save_results:
+        if should_write_cp_theta_file:
             with open(cp_theta_file, "w") as f:
                 f.write("TSR\ttheta_deg\tCp_theta\n")
 
-        # Control flags for conditional azimuthal visualization
         has_plot_data = False
         theta_plot, cp_plot = None, None
 
-        if fixed_parameter == 'vinf':
-            for i, tsr in enumerate(tsrvec):
+        for i, tsr in enumerate(tsrvec):
+            if fixed_parameter == 'vinf':
                 turbine.Omega = vinf * tsr / _to_scalar(r)
-                CT, CP, Rp, Tp, Zp, theta = actuatorcylinder(
-                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z, H
-                )
-                CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
-                    CP,
-                    CT,
-                    _to_scalar(Rp),
-                    _to_scalar(Tp),
-                    _to_scalar(Zp),
-                )
+            elif fixed_parameter == 'omega':
+                turbine.Omega = _to_scalar(angular_velocity)
+                env.Vinf = turbine.Omega * _to_scalar(r) / tsr
+            else:
+                raise ValueError("Invalid value for 'fixed_parameter'. Use 'vinf' or 'omega'.")
 
+            # Solução aerodinâmica
+            CT, CP, Rp, Tp_raw, Zp, theta = actuatorcylinder(
+                turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z, H
+            )
+
+            CPvec[i], CTvec[i] = CP, CT
+            Rpvec[i], Tpvec[i], Zpvec[i] = _to_scalar(Rp), _to_scalar(Tp_raw), _to_scalar(Zp)
+
+            # --- PROCESSAMENTO DE CP(THETA) ---
+            # Ocorre estritamente no índice mais próximo do TSR alvo
+            if cp_theta_enabled and i == target_idx:
                 theta_deg = np.degrees(theta)
                 Href = 1.0
                 Sref = 2 * _to_scalar(turbine.r) * Href
 
-                Cp_theta = (abs(turbine.Omega) * _to_scalar(turbine.r) * Tp) / (
+                # Calcula a curva azimutal usando a distribuição de força tangencial (Tp_raw)
+                Cp_theta = (abs(turbine.Omega) * _to_scalar(turbine.r) * Tp_raw) / (
                     0.5 * env.rho * _to_scalar(env.Vinf)**3 * Sref
                 )
 
-                if abs(tsr - TARGET_TSR) < TSR_TOL:
-                    theta_plot = theta_deg.copy()
-                    cp_plot = Cp_theta.copy()
-                    has_plot_data = True
+                theta_plot = theta_deg.copy()
+                cp_plot = Cp_theta.copy()
+                has_plot_data = True
 
-                save_this_tsr = True
-                if SAVE_ONLY_TARGET_TSR:
-                    save_this_tsr = abs(tsr - TARGET_TSR) < TSR_TOL
-
-                if save_results and save_this_tsr:
+                if should_write_cp_theta_file:
                     Cp_theta_iterable = np.full_like(theta_deg, Cp_theta) if not hasattr(Cp_theta, "__iter__") else Cp_theta
                     with open(cp_theta_file, "a") as f:
                         for th, cp in zip(theta_deg, Cp_theta_iterable):
                             f.write(f"{tsr:.6f}\t{th:.6f}\t{cp:.6f}\n")
 
-        elif fixed_parameter == 'omega':
-            for i, tsr in enumerate(tsrvec):
-                turbine.Omega = _to_scalar(angular_velocity)
-                env.Vinf = turbine.Omega * _to_scalar(r) / tsr
-                CT, CP, Rp, Tp, Zp, _ = actuatorcylinder(
-                    turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z, H
-                )
-                CPvec[i], CTvec[i], Rpvec[i], Tpvec[i], Zpvec[i] = (
-                    CP,
-                    CT,
-                    _to_scalar(Rp),
-                    _to_scalar(Tp),
-                    _to_scalar(Zp),
-                )
-        else:
-            raise ValueError("Invalid value for 'fixed_parameter'. Use 'vinf' or 'omega'.")
-
-        # Compile matrix for filesystem export
+        # --- EXPORTAÇÃO DOS DADOS GERAIS (Cp x TSR) ---
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
         header = 'TSR\tCP\tCT\tRp\tTp\tZp'
         if save_results:
@@ -1212,34 +1220,33 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
                         writer.writerow(header.split('\t'))
                     writer.writerows(data_to_save.tolist())
 
-        # Main Plot: Performance Curve (Cp vs TSR)
-        fig1 = plt.figure()
-        plt.plot(tsrvec, CPvec)
-        plt.xlabel('TSR')
-        plt.ylabel('$C_p$')
-        plt.grid(True)
-        plt.tight_layout()
+        # --- SALVAMENTO DAS FIGURAS ---
 
-        # Secondary Plot: Azimuthal Distribution
-        fig2 = None
-        if has_plot_data:
-            fig2 = plt.figure()
-            plt.plot(theta_plot, cp_plot, marker='o')
-            plt.xlabel('Azimuthal angle (deg)')
-            plt.ylabel('$C_p(\\theta)$')
+        # 1. Gráfico Principal: Cp vs TSR
+        if save_plot:
+            fig1 = plt.figure()
+            plt.plot(tsrvec, CPvec, 'o-')
+            plt.xlabel('TSR')
+            plt.ylabel('$C_p$')
             plt.grid(True)
             plt.tight_layout()
-        
-        if save_plot:
-            fig1_plot_filename = f'cp_curve_{airfoil_name}.{image_format}'
-            fig1.savefig(os.path.join(result_dir, fig1_plot_filename), format=image_format, dpi=dpi)
 
-            if has_plot_data and fig2 is not None:
-                fig2_plot_filename = f'cp_theta_{airfoil_name}_tsr2p58.{image_format}'
-                fig2.savefig(os.path.join(result_dir, fig2_plot_filename), format=image_format, dpi=dpi)
+            fig1_filename = f'cp_curve_{airfoil_name}.{image_format}'
+            fig1.savefig(os.path.join(result_dir, fig1_filename), format=image_format, dpi=dpi)
+            plt.close(fig1)
 
-        plt.close(fig1)
-        if fig2 is not None:
+        # 2. Gráfico Secundário: Cp x Theta
+        if save_plot and cp_theta_enabled and save_cp_theta_plot and has_plot_data:
+            fig2 = plt.figure()
+            plt.plot(theta_plot, cp_plot, 'o-')
+            plt.xlabel('Azimuthal angle (deg)')
+            plt.ylabel('$C_p(\\theta)$')
+            plt.title(f'TSR = {actual_target_tsr:.2f}')
+            plt.grid(True)
+            plt.tight_layout()
+
+            fig2_filename = f'cp_theta_{airfoil_name}_tsr{fmt(round(actual_target_tsr, 2))}.{image_format}'
+            fig2.savefig(os.path.join(result_dir, fig2_filename), format=image_format, dpi=dpi)
             plt.close(fig2)
 
         elapsed = time.time() - start_time
