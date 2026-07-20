@@ -8,10 +8,10 @@ turbine:
   twist: 0.0               # Blade twist angle (deg)
   delta: 0.0               # Blade pitch/offset angle (deg)
   chord:
-  - 1.75            # Chord line length (m)
+    - 1.75                 # Chord line length (m)
   B: 2                     # Number of blades
   solidity: 
-  - 0.1          # Solidity (calculated based on rotor dimensions)
+    - 0.1                  # Solidity (calculated based on rotor dimensions)
   centerX: 0.0             # X-coordinate of the turbine center (m)
   centerY: 0.0             # Y-coordinate of the turbine center (m)
   Omega: 1.427             # Rotational speed (rad/s)
@@ -19,23 +19,23 @@ turbine:
 
 environment:
   Vinf: 
-  - 6.23             # Free-stream velocity (m/s) - Varied in Sanvito's experiment
+    - 6.23                 # Free-stream velocity (m/s) - Varied in Sanvito's experiment
   rho: 1.225               # Fluid density (kg/m3)
   mu: 1.7894e-05           # Dynamic viscosity (Pa*s)
 
 solver:
   tsr:
-    min: 4.0
-    max: 7.0
-    n_points: 10
+    min: 4.0               # Minimum Tip Speed Ratio (TSR)
+    max: 7.0               # Maximum Tip Speed Ratio (TSR)
+    n_points: 10           # Number of TSR evaluation points
 
-  method: neuralfoil     # "neuralfoil" or "file". It's the way the cl and cd is obtained.
-  fixed_parameter: vinf # "omega" or "vinf"
+  method: neuralfoil       # Aerodynamic polar provider: "neuralfoil" or "file"
+  fixed_parameter: vinf    # Parameter kept constant during sweep: "omega" or "vinf"
   
   neuralfoil:
     airfoil: 
-    - naca0018  # Airfoil profile designated for the simulation
-    model_size: large    # "xxsmall"	"xsmall"	"small"	"medium"	"large"	"xlarge"	"xxlarge"	"xxxlarge"
+      - naca0018           # Airfoil profile designated for the simulation
+    model_size: large      # Model resolution: "xxsmall", "xsmall", "small", "medium", "large", "xlarge", "xxlarge", "xxxlarge"
     
   file:
     path: src/data/experimental/NACA_0012_mod.dat # Path to polar data file
@@ -54,7 +54,7 @@ submodels:
   dynamic_stall: true      # Enable dynamic stall modeling (true/false)
 
   flow_curvature:
-    enabled: true         # "true" or "false"
+    enabled: true         # Enable flow curvature corrections (true/false)
     normalized_hook_point: 0.1 # Reference point along the chord (0.0 = leading edge)
 
 output:
@@ -62,15 +62,15 @@ output:
   save_config: true        # Save a copy of this configuration file with the results
   save_plot: true          # Generate and save output plots
   data_file:
-    format: dat          # "dat" or "csv"
+    format: dat            # Output data file format: "dat" or "csv"
     include_header: true   # Include column headers in the output file
   plot_image:
-    format: png          # "png" or "eps"
+    format: png            # Output plot image format: "png" or "eps"
     dpi: 300               # Image resolution (Dots Per Inch)
 
   cp_theta:
-    enabled: true            # Habilita/Desabilita o processamento de Cp(theta)
-    target_tsr: 2.58         # TSR alvo para extração da curva azimutal
-    tolerance: 0.7          # Tolerância de busca para encontrar o TSR
-    save_data: true          # Salva o arquivo cp_theta_distribution.dat
-    save_plot: true          # Salva a imagem do gráfico Cp x Theta
+    enabled: true            # Enable/disable Cp(theta) extraction (2D mode only)
+    target_tsr: 2.58         # Target TSR for azimuthal distribution extraction
+    tolerance: 0.7           # Search tolerance to locate target TSR
+    save_data: true          # Save the cp_theta_distribution.dat raw data file
+    save_plot: true          # Save the Cp vs Theta plot image

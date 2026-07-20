@@ -995,52 +995,34 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     data are exported to disk according to the configuration settings.
 
     Args:
-        params (tuple): A tuple containing case parameters in the order:
+        params (tuple): Case parameters ordered as:
             `(airfoil_index, turbine_index, chord, solidity, vinf)` where:
-                - airfoil_index (int): Index of the airfoil to be evaluated.
+                - airfoil_index (int): Index of the airfoil profile to evaluate.
                 - turbine_index (int): Index of the turbine configuration.
                 - chord (float): Blade chord length [m].
                 - solidity (float): Rotor solidity ratio ($\sigma = B c / R$).
                 - vinf (float): Free-stream wind velocity [m/s].
         base_config (dict): Deep-copyable base configuration dictionary containing 
             'turbine', 'environment', 'solver', 'submodels', and 'output' sections.
-        flow_cfg (dict, optional): Flow curvature configuration override. If None, it is
-            extracted from `base_config['submodels']['flow_curvature']`. Defaults to None.
-        stall_angles (list of tuple, optional): List of precomputed positive and negative 
-            stall angles `(aoaStallPos, aoaStallNeg)` per airfoil index. Required for 
-            aerodynamic model evaluation. Defaults to None.
-        z (float, optional): Vertical height coordinate [m] of the current slice for 3D 
-            multi-slice simulations. Defaults to None.
-        H (float, optional): Total rotor height [m] for 3D multi-slice simulations. 
-            Defaults to None.
+        flow_cfg (dict, optional): Flow curvature configuration override. Defaults to None.
+        stall_angles (list of tuple, optional): Precomputed positive and negative stall 
+            angles `(aoaStallPos, aoaStallNeg)` per airfoil index. Required. Defaults to None.
+        z (float, optional): Vertical slice coordinate [m] for 3D multi-slice runs. Defaults to None.
+        H (float, optional): Total rotor height [m] for 3D multi-slice runs. Defaults to None.
 
     Returns:
-        dict: A dictionary containing simulation outputs.
-            On success ('status': 'OK'):
-                - 'name' (str): Folder/case name identifier.
-                - 'status' (str): Execution status ('OK').
-                - 'time_sec' (float): Total elapsed simulation time in seconds.
-                - 'tsr' (NDArray): Evaluated Tip Speed Ratio vector.
-                - 'CP' (NDArray): Global power coefficient curve ($C_p$).
-                - 'CT' (NDArray): Global thrust coefficient curve ($C_t$).
-                - 'Tp' (NDArray): Normal/radial force coefficients vector ($R_p$).
-                - 'Rp' (NDArray): Tangential force coefficients vector ($T_p$).
-                - 'Zp' (NDArray): Vertical/axial force coefficients vector ($Z_p$).
-            On failure ('status': 'ERROR: ...'):
-                - 'name' (str): Folder/case name identifier.
-                - 'status' (str): Error message summary.
-                - 'time_sec' (float): Elapsed time until failure in seconds.
-                - 'traceback' (str): Formatted Python execution traceback.
+        dict: Simulation output dictionary containing execution status, performance metrics,
+              and calculated force coefficients or error tracebacks.
 
     Raises:
         ValueError: If `stall_angles` is not provided.
-        ValueError: If `config['solver']['fixed_parameter']` is not set to 'vinf' or 'omega'.
+        ValueError: If `config['solver']['fixed_parameter']` is not 'vinf' or 'omega'.
     """
 
     airfoil_index, turbine_index, chord, solidity, vinf = params
     config = copy.deepcopy(base_config)
 
-    # Output settings
+    # OUTPUT AND SAVING CONFIGURATIONS
     output_cfg = config.get('output', {})
     save_results = output_cfg.get('save', True)
     save_config_used = output_cfg.get('save_config', True)
@@ -1054,26 +1036,22 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     image_format = plot_cfg.get('format', 'png')
     dpi = plot_cfg.get('dpi', 300)
 
-    # 1. Check if running in 3D simulation mode
+    # SIMULATION MODE & CP(THETA) RULE VALIDATION
+    # Check whether the current case is running under a 3D multi-slice domain
     is_3d_mode = config.get('simulation3d', {}).get('enabled', False) or (z is not None)
-
-    # 2. Extract Cp(theta) configurations
     cp_theta_cfg = output_cfg.get('cp_theta', {})
     cp_theta_requested = cp_theta_cfg.get('enabled', False)
     
-    # BUSINESS RULE: Enable cp_theta only if requested AND NOT in 3D mode
+    # BUSINESS RULE: Cp(theta) extraction is strictly restricted to 2D simulations
     cp_theta_enabled = cp_theta_requested and not is_3d_mode
-
-    # Informative log if cp_theta was requested during a 3D run
     if cp_theta_requested and is_3d_mode:
         print("--> [INFO] cp_theta extraction bypassed: Feature is only supported in 2D mode.", flush=True)
 
-    # Cp(theta) settings
     target_tsr = cp_theta_cfg.get('target_tsr', 2.58)
     save_cp_theta_data = cp_theta_cfg.get('save_data', True)
     save_cp_theta_plot = cp_theta_cfg.get('save_plot', True)
 
-    # Extract airfoil and base turbine properties
+    # TURBINE & ATMOSPHERIC PROPERTIES INITIALIZATION
     airfoil_name = config['solver']['neuralfoil']['airfoil'][airfoil_index]
     config['turbine']['chord'] = chord
     config['turbine']['solidity'] = solidity
@@ -1082,6 +1060,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     delta = config['turbine']['delta']
     r = config['turbine']['r']
 
+    # SUBMODEL SETUP (FLOW CURVATURE)
     if flow_cfg is None:
         flow_cfg = config.get('submodels', {}).get('flow_curvature', {})
 
@@ -1094,9 +1073,11 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     else:
         flow_manager = None
 
+    # Helper function for decimal formatting in string identifiers
     def fmt(val):
         return str(val).replace('.', 'p')
 
+    # Construct unique folder identifier for the case outputs
     folder_name = (
         f'{airfoil_name}_ch{fmt(chord)}_sol{fmt(solidity)}_vinf{fmt(vinf)}'
         f'_delta{fmt(delta)}_r{fmt(r)}'
@@ -1104,20 +1085,24 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     result_dir = os.path.join('src/results/temporary_results', folder_name)
     config['output']['result_folder'] = folder_name
 
+    # Create destination directory if any saving option is enabled
     if save_results or save_config_used or save_plot:
         os.makedirs(result_dir, exist_ok=True)
-        print(f"--> [DEBUG] Salvo em: {os.path.abspath(result_dir)}")
+        print(f"--> [DEBUG] Output path: {os.path.abspath(result_dir)}")
 
+    # Archive active configuration settings
     if save_config_used:
         from src.pyvawt.single.utils import save_config
         save_config(config, os.path.join(result_dir, 'config_used.yaml'))
 
+    # Helper function to ensure scalar conversion
     def _to_scalar(val):
         try:
             return val[0]
         except (TypeError, IndexError):
             return val
 
+    # Instantiate core turbine and environmental objects
     turbine, env, _, _, _, _, _ = initialize_turbine_and_environment(config)
     
     fixed_parameter = config['solver']['fixed_parameter']
@@ -1138,16 +1123,18 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     try:
         print(f'Simulating: {folder_name}')
 
+        # TSR SWEEP VECTOR DISCRETIZATION
         tsr_cfg = config.get('solver', {}).get('tsr', {})
         tsr_min = float(tsr_cfg.get('min', 1.0))
         tsr_max = float(tsr_cfg.get('max', 7.0))
         n = int(tsr_cfg.get('n_points', 20))
         tsrvec = np.linspace(tsr_min, tsr_max, n)
+        
         CPvec, CTvec = np.zeros(n), np.zeros(n)
         Rpvec, Tpvec, Zpvec = np.zeros(n), np.zeros(n), np.zeros(n)
 
-        # --- SELEÇÃO ROBUSTA DO TSR ALVO ---
-        # Identifica automaticamente o índice do TSR mais próximo de target_tsr
+        # TARGET TSR SELECTION
+        # Automatically identify the array index corresponding to the nearest TSR
         if cp_theta_enabled:
             target_idx = int(np.argmin(np.abs(tsrvec - target_tsr)))
             actual_target_tsr = tsrvec[target_idx]
@@ -1165,7 +1152,9 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
         has_plot_data = False
         theta_plot, cp_plot = None, None
 
+        # AERODYNAMIC SOLVER SWEEP LOOP
         for i, tsr in enumerate(tsrvec):
+            # Adjust kinematic parameter according to operational constraint
             if fixed_parameter == 'vinf':
                 turbine.Omega = vinf * tsr / _to_scalar(r)
             elif fixed_parameter == 'omega':
@@ -1174,7 +1163,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             else:
                 raise ValueError("Invalid value for 'fixed_parameter'. Use 'vinf' or 'omega'.")
 
-            # Solução aerodinâmica
+            # Execute Actuator Cylinder aerodynamic solver
             CT, CP, Rp, Tp_raw, Zp, theta = actuatorcylinder(
                 turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z, H
             )
@@ -1182,14 +1171,14 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             CPvec[i], CTvec[i] = CP, CT
             Rpvec[i], Tpvec[i], Zpvec[i] = _to_scalar(Rp), _to_scalar(Tp_raw), _to_scalar(Zp)
 
-            # --- PROCESSAMENTO DE CP(THETA) ---
-            # Ocorre estritamente no índice mais próximo do TSR alvo
+            # AZIMUTHAL CP(THETA) EVALUATION
+            # Evaluated exclusively at the index nearest to target_tsr
             if cp_theta_enabled and i == target_idx:
                 theta_deg = np.degrees(theta)
                 Href = 1.0
                 Sref = 2 * _to_scalar(turbine.r) * Href
 
-                # Calcula a curva azimutal usando a distribuição de força tangencial (Tp_raw)
+                # Compute local power coefficient from tangential force distribution (Tp_raw)
                 Cp_theta = (abs(turbine.Omega) * _to_scalar(turbine.r) * Tp_raw) / (
                     0.5 * env.rho * _to_scalar(env.Vinf)**3 * Sref
                 )
@@ -1204,7 +1193,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
                         for th, cp in zip(theta_deg, Cp_theta_iterable):
                             f.write(f"{tsr:.6f}\t{th:.6f}\t{cp:.6f}\n")
 
-        # --- EXPORTAÇÃO DOS DADOS GERAIS (Cp x TSR) ---
+        # GLOBAL RESULTS EXPORT (Cp vs. TSR)
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
         header = 'TSR\tCP\tCT\tRp\tTp\tZp'
         if save_results:
@@ -1220,9 +1209,8 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
                         writer.writerow(header.split('\t'))
                     writer.writerows(data_to_save.tolist())
 
-        # --- SALVAMENTO DAS FIGURAS ---
-
-        # 1. Gráfico Principal: Cp vs TSR
+        # FIGURE GENERATION AND EXPORT
+        # Primary plot: Performance curve (Cp vs. TSR)
         if save_plot:
             fig1 = plt.figure()
             plt.plot(tsrvec, CPvec, 'o-')
@@ -1235,7 +1223,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             fig1.savefig(os.path.join(result_dir, fig1_filename), format=image_format, dpi=dpi)
             plt.close(fig1)
 
-        # 2. Gráfico Secundário: Cp x Theta
+        # Secondary plot: Azimuthal power coefficient (Cp vs. Theta)
         if save_plot and cp_theta_enabled and save_cp_theta_plot and has_plot_data:
             fig2 = plt.figure()
             plt.plot(theta_plot, cp_plot, 'o-')
