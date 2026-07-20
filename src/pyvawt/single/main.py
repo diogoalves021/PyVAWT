@@ -4,8 +4,8 @@ import time
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from src.pyvawt.simulation import run_simulation_case, simulate_3D_turbine
-from src.pyvawt.utils import (
+from src.pyvawt.single.simulation import run_simulation_case, simulate_3D_turbine
+from src.pyvawt.single.utils import (
     load_config,
     detect_stall_angles,
     print_config,
@@ -15,75 +15,19 @@ from src.pyvawt.utils import (
     print_simulation_results,
     format_time,
 )
-#run command: uv run python3 -m src.pyvawt.main
+#run command: uv run python3 -m src.pyvawt.single.main
 # test/data/config.yaml src/pyvawt/config/config.yaml
 
 def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     '''
     Run a batch of aerodynamic simulations defined by the configuration.
-
-    The function loads the configuration via :func:`load_config`, enumerates all
-    parameter combinations (airfoil, turbine index, chord, solidity, Vinf) and
-    executes each simulation in parallel using :class:`concurrent.futures.ProcessPoolExecutor`.
-    Results are collected in memory, written to a CSV file under
-    ``src/results/temporary_results/log_simulacoes.csv``, and a light textual
-    summary table is printed to stdout using :func:`print_summary_tabulate`.
-
-    Notes
-    -----
-    - Each simulation case is executed by :func:`run_simulation_case`.
-    - All tasks are submitted to the executor at once. If the total number of
-      combinations is very large this can increase memory usage; consider using
-      a generator, batching, or a streaming submission strategy in that case.
-    - Progress output is a minimal ASCII counter updated periodically to reduce
-      terminal rendering overhead (``UPDATE_EVERY = max(1, total // 100)``).
-    - If your simulation code uses multi-threaded native libraries (e.g. BLAS,
-      OpenMP), set environment variables such as ``OMP_NUM_THREADS=1``,
-      ``OPENBLAS_NUM_THREADS=1`` and ``MKL_NUM_THREADS=1`` before creating the pool
-      to avoid oversubscription.
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    -------
-    None
-        This function does not return a value. Results are written to disk and a
-        summary is printed to stdout.
-
-    Side effects
-    ------------
-    - Creates directories and files under ``src/results/temporary_results/`` (one
-      folder per case when enabled in the config) and writes a CSV summary at
-      ``src/results/temporary_results/log_simulacoes.csv``.
-    - Prints progress messages and the final summary table to stdout.
-    - Exceptions raised inside individual simulation cases are captured and
-      recorded as result rows with ``status='ERROR'`` and an ``error`` field.
-
-    Raises
-    ------
-    IndexError
-        If no combinations are generated, the code currently assumes at least
-        one result exists and may attempt to access ``results[0]`` when writing
-        the CSV. Consider adding an explicit check for an empty results list.
-    OSError
-        If creating the output directory or writing files fails (e.g. due to
-        permissions), an OSError may be raised.
-
-    Examples
-    --------
-    Run all simulations defined by the current configuration (blocking call):
-
-    >>> run_simulation()
     '''
     args = parse_args()
     config = load_config(path=args.config or 'src/pyvawt/config/config.yaml')
-    # config = load_config(path=config_path)
 
     stall_angles = {}
 
-    for airfoil_index in range(len(config['simulation']['airfoil'])):
+    for airfoil_index in range(len(config['solver']['neuralfoil']['airfoil'])):
         aoaStallPos, aoaStallNeg = detect_stall_angles(config, airfoil_index)
         stall_angles[airfoil_index] = (aoaStallPos, aoaStallNeg)
 
@@ -92,7 +36,7 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     # ==========================
     # CHECK 3D SIMULATION MODE
     # ==========================
-    sim3d_cfg = config.get('simulation', {}).get('simulation3d', {})
+    sim3d_cfg = config.get('solver', {}).get('simulation3d', {})
 
     if sim3d_cfg.get('enabled', False):
         print("\n==============================")
@@ -103,7 +47,7 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
 
         print("\n3D simulation finished.\n")
 
-        return  # 🔴 CRUCIAL: impede rodar o batch 2D
+        return
 
     print_summary(config)
 
@@ -112,20 +56,20 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
         print("=" * 40)
         print_config(config)
 
-    airfoil_indices = list(range(len(config['simulation']['airfoil'])))
-    turbine_indices = list(range(config['simulation']['num_turbines']))
+    # Carregamento dos vetores de varredura (Sweep)
+    airfoil_indices = list(range(len(config['solver']['neuralfoil']['airfoil'])))
     chords = config['turbine']['chord']
     solidities = config['turbine']['solidity']
-    vinfs = config['environment']['Vinf']
-    flow_cfg = config.get("flow_curvature", {})
+    vinfs = config['environment']['Vinf'] 
+    flow_cfg = config.get("submodels", {}).get("flow_curvature", {})
 
+    # Montagem das combinações
     combinations = []
     for ai in airfoil_indices:
-        for ti in turbine_indices:
-            for chord in chords:
-                for sol in solidities:
-                    for vinf in vinfs:
-                        combinations.append((ai, ti, chord, sol, vinf))
+        for chord in chords:
+            for sol in solidities:
+                for vinf in vinfs:
+                    combinations.append((ai, 0, chord, sol, vinf))
 
     total = len(combinations)
     if total > 1:
@@ -141,24 +85,20 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     # Simple progress bar with low computational cost
     def _print_progress(completed, total, start_time):
         elapsed = time.time() - start_time
-
         pct = (completed / total) * 100 if total else 100.0
 
         elapsed_m = int(elapsed // 60)
         elapsed_s = int(elapsed % 60)
 
-        # ---- ETA calculation ----
         if completed > 0 and total > completed:
             avg_time = elapsed / completed
             eta = avg_time * (total - completed)
-
             eta_m = int(eta // 60)
             eta_s = int(eta % 60)
             eta_str = f"{eta_m:02d}:{eta_s:02d}"
         else:
             eta_str = "00:00"
 
-        # ---- message ----
         if total > 1:
             msg = (
                 f"\rProgress: {completed}/{total} cases ({pct:5.1f}%) "
@@ -194,7 +134,6 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
                 }
             results.append(result)
             completed += 1
-            # Updates every N completions for time saving
             if (completed % UPDATE_EVERY) == 0 or completed == total:
                 _print_progress(completed, total, start_time)
 
@@ -209,7 +148,6 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
 
     # Summary
     print_simulation_results(results, start_time, log_path)
-
 
 if __name__ == '__main__':
     run_simulation()

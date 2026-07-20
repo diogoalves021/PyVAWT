@@ -7,7 +7,7 @@ import argparse
 import time
 from tabulate import tabulate
 
-from .data_generation import get_cl_cd_neuralfoil
+from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil
 
 def load_config(path):
     '''
@@ -102,19 +102,8 @@ def get_tc_from_airfoil(airfoil_name: str):
 def detect_stall_angles(config, airfoil_index):
     """
     Computes positive and negative stall angles using NeuralFoil.
-
-    The airfoil is read from the config file.
-
-    Returns
-    -------
-    aoaStallPos : float
-        Positive stall angle [rad]
-    aoaStallNeg : float
-        Negative stall angle [rad]
     """
-
-    # Airfoil from config
-    airfoil_name = config['simulation']['airfoil'][airfoil_index].lower()
+    airfoil_name = config['solver']['neuralfoil']['airfoil'][airfoil_index].lower()
     airfoil = asb.Airfoil(airfoil_name)
 
     alpha_deg = np.linspace(-30, 30, 600)
@@ -161,13 +150,31 @@ def print_config(config):
             print(f"{key:<20} : {value}")
 
 def print_summary(config):
+    """
+    Prints a formatted summary of the simulation parameters and calculated fluid properties.
+    """
     print("\nSimulation summary")
     print("=" * 40)
 
     turb = config.get("turbine", {})
     env = config.get("environment", {})
-    sim = config.get("simulation", {})
-    aero = config.get("aero", {})
+    
+    solver = config.get("solver", {})
+    submodels = config.get("submodels", {})
+
+    # Helper to get the first value if it is a sweep list
+    def _get_ref(val):
+        return val[0] if isinstance(val, list) else val
+
+    # Extract parameters needed for physical calculations
+    vinf_ref = _get_ref(env.get('Vinf', 0.0))
+    chord_ref = _get_ref(turb.get('chord', 0.0))
+    rho = env.get('rho', 1.225)
+    mu = env.get('mu', 1.789e-5)              # Dynamic viscosity of air
+    a = env.get('speed_of_sound', 343.0)      # Standard speed of sound (20°C)
+
+    re_calc = (rho * vinf_ref * chord_ref) / mu if mu else 0.0
+    mach_calc = vinf_ref / a if a else 0.0
 
     print("\nTURBINE")
     print("-" * 40)
@@ -184,15 +191,17 @@ def print_summary(config):
 
     print("\nSIMULATION")
     print("-" * 40)
-    print(f"airfoil              : {sim.get('airfoil')}")
-    print(f"Reynolds number      : {sim.get('Re')}")
-    print(f"Mach number          : {sim.get('Mach')}")
-    print(f"dynamic stall        : {aero.get('dynamic_stall')}")
+    
+    airfoil_ref = solver.get('neuralfoil', {}).get('airfoil')
+    print(f"airfoil              : {airfoil_ref}")
+    print(f"Reynolds number (Ref): {re_calc:.2e}")
+    print(f"Mach number (Ref)    : {mach_calc:.3f}")
+    
+    print(f"dynamic stall        : {submodels.get('dynamic_stall')}")
 
     print("=" * 40)
 
 def parse_args():
-
     parser = argparse.ArgumentParser(
         description="Run VAWT actuator-cylinder simulations."
     )

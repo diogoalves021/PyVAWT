@@ -47,7 +47,6 @@ def run_from_gui():
     config['environment']['Vinf'] = [float(vinf_var.get())]
     config['simulation']['airfoil'] = [airfoil_var.get()]
     config['simulation']['num_turbines'] = 1
-    config['simulation']['var_omega_vinf'] = 1
 
     config['simulation']['fixed_parameter'] = fixed_param_var.get()
     config['output']['save'] = bool(save_check_var.get())
