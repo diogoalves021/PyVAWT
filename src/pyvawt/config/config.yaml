@@ -1,76 +1,81 @@
 # ==============================================================================
-# PyVAWT Configuration File for Single Turbine
+# PyVAWT Configuration File for Single Turbine Simulation
 # ==============================================================================
 
 turbine:
-  r: 35.0                  # Rotor radius (m) - Verify if your solver expects radius or diameter
-  H: 1.0                   # Rotor height (m)
-  twist: 0.0               # Blade twist angle (deg)
-  delta: 0.0               # Blade pitch/offset angle (deg)
+  r: 35.0                        # Rotor radius (m) - Verify if your solver expects radius or diameter
+  H: 1.0                         # Rotor height (m)
+  twist: 0.0                     # Blade twist angle (deg)
+  delta: 0.0                     # Blade pitch/offset angle (deg)
   chord:
-    - 1.75                 # Chord line length (m)
-  B: 2                     # Number of blades
-  solidity: 
-    - 0.1                  # Solidity (calculated based on rotor dimensions)
-  centerX: 0.0             # X-coordinate of the turbine center (m)
-  centerY: 0.0             # Y-coordinate of the turbine center (m)
-  Omega: 1.427             # Rotational speed (rad/s)
-  ntheta: 36               # Number of angular/azimuthal steps
+    - 1.75                       # Chord line length (m)
+
+  B: 2                           # Number of blades
+  solidity:
+    - 0.1                        # Solidity (calculated based on rotor dimensions)
+
+  centerX: 0.0                   # X-coordinate of the turbine center (m)
+  centerY: 0.0                   # Y-coordinate of the turbine center (m)
+  Omega: 1.427                   # Rotational speed (rad/s)
+  ntheta: 36                     # Number of angular/azimuthal steps
 
 environment:
-  Vinf: 
-    - 6.23                 # Free-stream velocity (m/s) - Varied in Sanvito's experiment
-  rho: 1.225               # Fluid density (kg/m3)
-  mu: 1.7894e-05           # Dynamic viscosity (Pa*s)
+  Vinf:
+    - 6.23                       # Free-stream velocity (m/s) - Varied in Sanvito's experiment
+
+  rho: 1.225                     # Fluid density (kg/m3)
+  mu: 1.7894e-05                 # Dynamic viscosity (Pa*s)
 
 solver:
   tsr:
-    min: 4.0               # Minimum Tip Speed Ratio (TSR)
-    max: 7.0               # Maximum Tip Speed Ratio (TSR)
-    n_points: 10           # Number of TSR evaluation points
+    min: 4.0                     # Minimum Tip Speed Ratio (TSR)
+    max: 7.0                     # Maximum Tip Speed Ratio (TSR)
+    n_points: 10                 # Number of TSR evaluation points
 
-  method: neuralfoil       # Aerodynamic polar provider: "neuralfoil" or "file"
-  fixed_parameter: vinf    # Parameter kept constant during sweep: "omega" or "vinf"
-  
+  method: neuralfoil             # Aerodynamic polar provider: "neuralfoil" or "file"
+  fixed_parameter: vinf          # Parameter kept constant during sweep: "omega" or "vinf"
+
   neuralfoil:
-    airfoil: 
-      - naca0018           # Airfoil profile designated for the simulation
-    model_size: large      # Model resolution: "xxsmall", "xsmall", "small", "medium", "large", "xlarge", "xxlarge", "xxxlarge"
-    
+    airfoil:
+      - naca0018                 # Airfoil profile designated for the simulation
+    model_size: large            # Model resolution: "xxsmall", "xsmall", "small", "medium", "large", "xlarge", "xxlarge", "xxxlarge"
+
   file:
-    path: src/data/experimental/NACA_0012_mod.dat # Path to polar data file
+    path: src/data/experimental/NACA_0012_mod.dat   # Path to polar data file
 
   simulation3d:
-    enabled: true          # Enable 3D effects/domain simulation
+    enabled: true                # Enable 3D effects/domain simulation
 
-    settings:              # [Active only if enabled = true]
-      height: 3.0            # Total height of the 3D domain (m)
-      vertical_layers: 3     # Number of vertical grid divisions for cylinder discretization
-      discretization_power: 2 # Vertical grid spacing law: 1 = linear, 2 = power law (nodes concentrated at top)
+    settings:                    # [Active only if enabled = true]
+      height: 3.0                # Total height of the 3D domain (m)
+      vertical_layers: 3         # Number of vertical grid divisions for cylinder discretization
+      discretization_power: 2    # Vertical grid spacing law: 1 = linear, 2 = power law (nodes concentrated at top)
       velocity_profile: power_law # Atmospheric wind profile model: 'constant' or 'power_law'
 
 submodels:
-  tip_loss: true          # Account for tip loss effects (true/false)
-  dynamic_stall: true      # Enable dynamic stall modeling (true/false)
+  tip_loss: true                 # Account for tip loss effects (true/false)
+  dynamic_stall: true            # Enable dynamic stall modeling (true/false)
 
   flow_curvature:
-    enabled: true         # Enable flow curvature corrections (true/false)
-    normalized_hook_point: 0.1 # Reference point along the chord (0.0 = leading edge)
+    enabled: true                # Enable flow curvature corrections (true/false)
+    normalized_hook_point: 0.1   # Reference point along the chord (0.0 = leading edge)
 
 output:
-  save: true               # Save simulation results
-  save_config: true        # Save a copy of this configuration file with the results
-  save_plot: true          # Generate and save output plots
+  save: true                     # Save simulation results
+  save_config: true              # Save a copy of this configuration file with the results
+  save_plot: true                # Generate and save output plots
+
   data_file:
-    format: dat            # Output data file format: "dat" or "csv"
-    include_header: true   # Include column headers in the output file
+    format: dat                  # Output data file format: "dat" or "csv"
+    include_header: true         # Include column headers in the output file
+
   plot_image:
-    format: png            # Output plot image format: "png" or "eps"
-    dpi: 300               # Image resolution (Dots Per Inch)
+    format: png                  # Output plot image format: "png" or "eps"
+    dpi: 300                     # Image resolution (Dots Per Inch)
 
   cp_theta:
-    enabled: true            # Enable/disable Cp(theta) extraction (2D mode only)
-    target_tsr: 2.58         # Target TSR for azimuthal distribution extraction
-    tolerance: 0.7           # Search tolerance to locate target TSR
-    save_data: true          # Save the cp_theta_distribution.dat raw data file
-    save_plot: true          # Save the Cp vs Theta plot image
+    enabled: true                # Enable/disable Cp(theta) extraction (2D mode only)
+    target_tsr: 2.58             # Target TSR for azimuthal distribution extraction
+    tolerance: 0.7               # Search tolerance to locate target TSR
+    save_data: true              # Save the cp_theta_distribution.dat raw data file
+    save_plot: true              # Save the Cp vs Theta plot image

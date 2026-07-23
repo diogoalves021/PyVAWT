@@ -1412,39 +1412,12 @@ def simulate_3D_turbine(base_config, stall_angles):
 
     print("[DEBUG] Shape TSR:", tsrvec_global.shape)
 
-    # Save results
-    print("\n[DEBUG] Salvando resultados 3D em:")
-    print(result_dir_3D)
-
-    data_to_save = np.column_stack((tsrvec_global, Cp_3D))
-    header = "TSR\tCp_3D\tCp_total"
-    filepath = os.path.join(result_dir_3D, "results_3D.dat")
-    np.savetxt(filepath, data_to_save, header=header, fmt='%.6f', delimiter='\t')
-
-    slices_info = []
-
-    # Save z
-    slices_info.append({
-        "z": z,
-        "CP": CP.copy()
-    })
-    
-    elapsed_3d = time.time() - start_time_3d
-    print(f'\n⏱ Total simulation time: {format_time(elapsed_3d)}')
-
-    from .utils import save_config
-
-    save_config(base_config, os.path.join(result_dir_3D, 'config_used.yaml'))
-
-    plt.figure()
-    plt.plot(tsrvec_global, Cp_3D)
-    plt.xlabel("TSR")
-    plt.ylabel("$C_p$ 3D")
-    plt.grid(True)
-    plt.tight_layout()
-
-    plt.savefig(os.path.join(result_dir_3D, "cp_curve_3D.png"), dpi=300)
-    plt.close()
+    return {
+        'tsr': tsrvec_global,
+        'cp_3d': Cp_3D,
+        'result_dir': result_dir_3D,
+        'elapsed_time': time.time() - start_time_3d
+    }
 
 # ======== Auxiliary Methods =========
 

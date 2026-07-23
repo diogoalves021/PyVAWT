@@ -6,7 +6,7 @@ Delegates NeuralFoil evaluations to the modular 'data_generation' library.
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Union, NamedTuple
+from typing import Dict, Any, List, Tuple, Union, NamedTuple, Optional
 import yaml
 
 import matplotlib.pyplot as plt
@@ -14,7 +14,6 @@ import numpy as np
 
 from src.pyvawt.multiple.simulation import actuatorcylinder, Turbine, Environment
 from src.pyvawt.multiple.read_data import readaerodyn
-
 from src.pyvawt.multiple.data_generation import load_config, get_cl_cd_neuralfoil
 
 # Global constants
@@ -52,7 +51,6 @@ class NeuralFoilAirfoilWrapper:
     def get_coefficients(self, alpha_rad: Union[float, np.ndarray], Re: Union[float, np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
         config = load_config()
         
-        # CORRIGIDO: Tratamento dinâmico e seguro para evitar IndexError na leitura da corda
         chord_entry = config['turbine']['chord']
         if isinstance(chord_entry, list):
             chord = float(chord_entry[self.turbine_index % len(chord_entry)])
@@ -62,20 +60,21 @@ class NeuralFoilAirfoilWrapper:
         rho = config['environment']['rho']
         mu = config['environment']['mu']
 
-        # Se o solver não fornecer Re, assume uma velocidade relativa padrão
         if Re is None:
             W = 10.0
         else:
             Re = np.asarray(Re)
-            # Re = rho * W * chord / mu  =>  W = Re * mu / (rho * chord)
             W = Re * mu / (rho * chord)
 
-        # Delega o cálculo para o seu módulo 'data_generation.py'
         return get_cl_cd_neuralfoil(alpha_rad, W, self.turbine_index, self.airfoil_index)
 
     def __call__(self, alpha_rad, Re=None):
         return self.get_coefficients(alpha_rad, Re)
 
+
+# ==============================================================================
+# CAMADA DE I/O E EXPORTAÇÃO DE RESULTADOS (EXPORTER COM SUPORTE A CONFIG)
+# ==============================================================================
 
 def _apply_plot_style() -> None:
     """Applies high-quality serif typography styles for academic/technical plots."""
@@ -87,8 +86,8 @@ def _apply_plot_style() -> None:
     })
 
 
-def plot_turbine_layout(turbines: List[Turbine], results_dir: Path, case_name: str) -> None:
-    """Generates a high-resolution top-view plot of the spatial layout of the turbines."""
+def plot_turbine_layout(turbines: List[Turbine], case_dir: Path, fmt: str = 'png', dpi: int = 300) -> None:
+    """Generates a top-view plot of the spatial layout using user-defined format and DPI."""
     _apply_plot_style()
     fig, ax = plt.subplots(figsize=(6, 6))
     
@@ -104,10 +103,163 @@ def plot_turbine_layout(turbines: List[Turbine], results_dir: Path, case_name: s
     ax.set_aspect('equal', 'box')
     fig.tight_layout()
     
-    fig.savefig(results_dir / f'layout_{case_name}.png', dpi=700)
-    fig.savefig(results_dir / f'layout_{case_name}.pdf')
+    out_path = case_dir / f'layout.{fmt.lower()}'
+    fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
 
+
+def _save_raw_data(
+    case_dir: Path,
+    num_turbines: int,
+    tsr_vec: np.ndarray,
+    cp_vec: np.ndarray,
+    ct_vec: np.ndarray,
+    rp_vec: np.ndarray,
+    tp_vec: np.ndarray,
+    zp_vec: np.ndarray,
+    fmt: str = 'dat',
+    include_header: bool = True
+) -> None:
+    """Saves raw data results (.dat or .csv) with optional headers and customizable delimiters."""
+    is_csv = (fmt.lower() == 'csv')
+    delimiter = ',' if is_csv else '\t'
+    ext = 'csv' if is_csv else 'dat'
+
+    if include_header:
+        header = f'TSR{delimiter}CP{delimiter}CT{delimiter}Rp{delimiter}Tp{delimiter}Zp'
+    else:
+        header = ''
+
+    for t in range(num_turbines):
+        data_to_save = np.column_stack((
+            tsr_vec, 
+            cp_vec[:, t], 
+            ct_vec[:, t], 
+            rp_vec[:, t], 
+            tp_vec[:, t], 
+            zp_vec[:, t]
+        ))
+        out_filename = case_dir / f'results_t{t+1}.{ext}'
+        np.savetxt(out_filename, data_to_save, header=header, fmt='%.6f', delimiter=delimiter, comments='')
+
+
+def _plot_performance_curves(
+    case_dir: Path,
+    num_turbines: int,
+    tsr_vec: np.ndarray,
+    cp_vec: np.ndarray,
+    fmt: str = 'png',
+    dpi: int = 300
+) -> None:
+    """Generates performance curves (Cp vs. TSR) using user-defined format and DPI."""
+    _apply_plot_style()
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    for t in range(num_turbines):
+        cp_t = cp_vec[:, t]
+        mask = cp_t >= -1.0
+        idx_sort = np.argsort(tsr_vec[mask])
+        ax.plot(
+            tsr_vec[mask][idx_sort], 
+            cp_t[mask][idx_sort], 
+            marker='o', 
+            label=f'Turbine {t+1}'
+        )
+    
+    if num_turbines > 1:
+        avg_cp = np.mean(cp_vec, axis=1)
+        mask_avg = avg_cp >= -1.0
+        idx_sort_avg = np.argsort(tsr_vec[mask_avg])
+        ax.plot(
+            tsr_vec[mask_avg][idx_sort_avg], 
+            avg_cp[mask_avg][idx_sort_avg], 
+            '--', 
+            color='black', 
+            linewidth=2, 
+            label='System Average'
+        )
+
+    ax.set_xlabel("TSR ($\lambda$)")
+    ax.set_ylabel(r"$C_p$")
+    ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
+    ax.legend()
+    fig.tight_layout()
+    
+    out_path = case_dir / f'cp_curve.{fmt.lower()}'
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+
+
+def export_coupled_case_results(
+    case_name: str,
+    config: Dict[str, Any],
+    turbines: List[Turbine],
+    tsr_vec: np.ndarray,
+    cp_vec: np.ndarray,
+    ct_vec: np.ndarray,
+    rp_vec: np.ndarray,
+    tp_vec: np.ndarray,
+    zp_vec: np.ndarray,
+    base_results_dir: Union[str, Path] = 'results'
+) -> Optional[Path]:
+    """
+    Exporta os resultados respeitando integralmente o bloco 'output' do config.yaml.
+    """
+    output_cfg = config.get("output", {})
+
+    # 1. Verifica se o salvamento está habilitado
+    if not output_cfg.get("save", True):
+        logger.info("[IO] Salvamento de resultados desativado (output.save = false).")
+        return None
+
+    # Extração das opções de salvamento com fallbacks seguros
+    save_config_flag = output_cfg.get("save_config", True)
+    save_plot_flag = output_cfg.get("save_plot", True)
+
+    data_file_cfg = output_cfg.get("data_file", {})
+    data_fmt = data_file_cfg.get("format", "dat")
+    inc_header = data_file_cfg.get("include_header", True)
+
+    plot_img_cfg = output_cfg.get("plot_image", {})
+    img_fmt = plot_img_cfg.get("format", "png")
+    img_dpi = int(plot_img_cfg.get("dpi", 300))
+
+    # Criação do diretório do caso
+    case_dir = Path(base_results_dir) / case_name
+    case_dir.mkdir(parents=True, exist_ok=True)
+
+    # 2. Salva a cópia do YAML de configuração
+    if save_config_flag:
+        with open(case_dir / 'config_used.yaml', 'w', encoding='utf-8') as f:
+            yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+
+    # 3. Exporta arquivos brutos de dados (.dat ou .csv)
+    num_turbines = len(turbines)
+    _save_raw_data(
+        case_dir=case_dir,
+        num_turbines=num_turbines,
+        tsr_vec=tsr_vec,
+        cp_vec=cp_vec,
+        ct_vec=ct_vec,
+        rp_vec=rp_vec,
+        tp_vec=tp_vec,
+        zp_vec=zp_vec,
+        fmt=data_fmt,
+        include_header=inc_header
+    )
+
+    # 4. Gera os gráficos caso a flag save_plot esteja ativa
+    if save_plot_flag:
+        plot_turbine_layout(turbines, case_dir, fmt=img_fmt, dpi=img_dpi)
+        _plot_performance_curves(case_dir, num_turbines, tsr_vec, cp_vec, fmt=img_fmt, dpi=img_dpi)
+
+    logger.info(f"[IO] Resultados salvos com sucesso na pasta: {case_dir.resolve()}")
+    return case_dir
+
+
+# ==============================================================================
+# CAMADA DE SOLVER E FÍSICA
+# ==============================================================================
 
 def _execute_tsr_sweep(
     turbines: List[Turbine],
@@ -147,7 +299,6 @@ def _execute_tsr_sweep(
             cp_vec[i, t] = cp[t]
             ct_vec[i, t] = ct[t]
             
-            # CORRIGIDO: Extração dimensional robusta para rp, tp, zp (previne quebras de formato)
             if rp.ndim == 2:
                 rp_vec[i, t] = rp[0, t]
                 tp_vec[i, t] = tp[0, t]
@@ -161,159 +312,6 @@ def _execute_tsr_sweep(
 
     return cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec
 
-
-def _save_raw_data(
-    results_dir: Path,
-    case_name: str,
-    num_turbines: int,
-    tsr_vec: np.ndarray,
-    cp_vec: np.ndarray,
-    ct_vec: np.ndarray,
-    rp_vec: np.ndarray,
-    tp_vec: np.ndarray,
-    zp_vec: np.ndarray
-) -> None:
-    """Saves raw data results (.dat files) sequentially for each modeled turbine."""
-    for t in range(num_turbines):
-        data_to_save = np.column_stack((
-            tsr_vec, 
-            cp_vec[:, t], 
-            ct_vec[:, t], 
-            rp_vec[:, t], 
-            tp_vec[:, t], 
-            zp_vec[:, t]
-        ))
-        header = 'TSR\tCP\tCT\tRp\tTp\tZp'
-        out_filename = results_dir / f'results_{case_name}_t{t+1}.dat'
-        np.savetxt(out_filename, data_to_save, header=header, fmt='%.6f', delimiter='\t')
-
-
-def _plot_performance_curves(
-    results_dir: Path,
-    case_name: str,
-    num_turbines: int,
-    tsr_vec: np.ndarray,
-    cp_vec: np.ndarray
-) -> None:
-    """Generates clean publication-ready performance curves (Cp vs. TSR)."""
-    _apply_plot_style()
-    fig, ax = plt.subplots(figsize=(8, 5))
-
-    for t in range(num_turbines):
-        cp_t = cp_vec[:, t]
-        mask = cp_t >= -1.0
-        idx_sort = np.argsort(tsr_vec[mask])
-        ax.plot(
-            tsr_vec[mask][idx_sort], 
-            cp_t[mask][idx_sort], 
-            marker='o', 
-            label=f'Turbine {t+1}'
-        )
-    
-    if num_turbines > 1:
-        avg_cp = np.mean(cp_vec, axis=1)
-        mask_avg = avg_cp >= -1.0
-        idx_sort_avg = np.argsort(tsr_vec[mask_avg])
-        ax.plot(
-            tsr_vec[mask_avg][idx_sort_avg], 
-            avg_cp[mask_avg][idx_sort_avg], 
-            '--', 
-            color='black', 
-            linewidth=2, 
-            label='System Average'
-        )
-
-    ax.set_xlabel("TSR ($\lambda$)")
-    ax.set_ylabel(r"$C_p$")
-    ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
-    ax.legend()
-    fig.tight_layout()
-    
-    fig.savefig(results_dir / f'cp_curve_{case_name}.png', dpi=300)
-    fig.savefig(results_dir / f'cp_curve_{case_name}.pdf')
-    plt.close(fig)
-
-
-def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[str, Any]:
-    """Runs an aerodynamic simulation case supporting coupled turbines with NeuralFoil integration."""
-    _, _, chord, solidity, vinf = params
-    config = load_config()
-    
-    # Extração a partir do novo bloco 'solver'
-    solver_cfg = config.get("solver", {})
-    method = solver_cfg.get("method", "neuralfoil")
-    use_neuralfoil = (method == "neuralfoil")
-    
-    if use_neuralfoil:
-        nf_cfg = solver_cfg.get("neuralfoil", {})
-        raw_airfoil = nf_cfg.get("airfoil", ["naca0018"])
-        airfoil_name = raw_airfoil[0] if isinstance(raw_airfoil, list) else str(raw_airfoil)
-    else:
-        file_cfg = solver_cfg.get("file", {})
-        airfoil_file = file_cfg.get("path")
-        if not airfoil_file:
-            raise KeyError("Caminho do perfil clássico não encontrado em 'solver.file.path'")
-        airfoil_path = Path(airfoil_file)
-        airfoil_name = airfoil_path.stem
-
-    num_turbines = int(solver_cfg.get("num_turbines", 1))
-    
-    # Mapeamento do parâmetro fixo ('vinf' -> estratégia 0 | 'omega' -> estratégia 1)
-    fixed_param = str(solver_cfg.get("fixed_parameter", "vinf")).lower()
-    var_omega_vinf = 0 if fixed_param == "vinf" else 1
-
-    config['turbine']['chord'] = [chord] * num_turbines
-    config['turbine']['solidity'] = [solidity] * num_turbines
-    config['environment']['Vinf'] = [vinf] if isinstance(config['environment']['Vinf'], list) else vinf
-    config['turbine']['r'] = chord * config['turbine']['B'] / solidity
-
-    case_name = f'{airfoil_name}_ch{chord}_sol{solidity}_vinf{vinf}'.replace('.', 'p')
-
-    results_dir = Path('results')
-    results_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(results_dir / f'config_{case_name}.yaml', 'w') as f:
-        yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
-
-    context = initialize_turbine_and_environment(config)
-    plot_turbine_layout(context.turbines, results_dir, case_name)
-
-    start_time = time.perf_counter()
-
-    try:
-        logger.info(f"Simulating {num_turbines} turbine(s) using case: {case_name}")
-
-        n_points = 20
-        tsr_vec = np.linspace(1.0, 7.0, n_points)
-        
-        cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec = _execute_tsr_sweep(
-            turbines=context.turbines,
-            env=context.env,
-            ntheta=context.ntheta,
-            tsr_vec=tsr_vec,
-            var_omega_vinf=var_omega_vinf,  # Usa o mapeamento de fixed_parameter
-            vinf=vinf,
-            radius=context.radius,
-            num_turbines=num_turbines
-        )
-
-        _save_raw_data(results_dir, case_name, num_turbines, tsr_vec, cp_vec, ct_vec, rp_vec, tp_vec, zp_vec)
-        _plot_performance_curves(results_dir, case_name, num_turbines, tsr_vec, cp_vec)
-
-        elapsed = time.perf_counter() - start_time
-        return {
-            'name': case_name,
-            'airfoil': airfoil_name,
-            'chord': chord,
-            'solidity': solidity,
-            'vinf': vinf,
-            'status': 'OK',
-            'time_sec': round(elapsed, 2)
-        }
-        
-    except Exception as err:
-        logger.error(f"Execution crashed for case {case_name}.", exc_info=True)
-        raise
 
 def initialize_turbine_and_environment(config: Dict[str, Any]) -> SimulationContext:
     """Initializes the turbine list and environment objects using solver YAML configuration."""
@@ -344,7 +342,6 @@ def initialize_turbine_and_environment(config: Dict[str, Any]) -> SimulationCont
     if len(chord_list) < num_turbines:
         chord_list.extend([chord_list[-1]] * (num_turbines - len(chord_list)))
 
-    # Leitura baseada no novo bloco solver:
     method = solver_params.get("method", "neuralfoil")
     use_neuralfoil = (method == "neuralfoil")
     turbines_airfoils = []
@@ -393,6 +390,98 @@ def initialize_turbine_and_environment(config: Dict[str, Any]) -> SimulationCont
         radius=r,
         ntheta=ntheta
     )
+
+
+def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[str, Any]:
+    """Runs an aerodynamic simulation case supporting coupled turbines with NeuralFoil integration."""
+    _, _, chord, solidity, vinf = params
+    config = load_config()
+    
+    solver_cfg = config.get("solver", {})
+    method = solver_cfg.get("method", "neuralfoil")
+    use_neuralfoil = (method == "neuralfoil")
+    
+    if use_neuralfoil:
+        nf_cfg = solver_cfg.get("neuralfoil", {})
+        raw_airfoil = nf_cfg.get("airfoil", ["naca0018"])
+        airfoil_name = raw_airfoil[0] if isinstance(raw_airfoil, list) else str(raw_airfoil)
+    else:
+        file_cfg = solver_cfg.get("file", {})
+        airfoil_file = file_cfg.get("path")
+        if not airfoil_file:
+            raise KeyError("Caminho do perfil clássico não encontrado em 'solver.file.path'")
+        airfoil_path = Path(airfoil_file)
+        airfoil_name = airfoil_path.stem
+
+    num_turbines = int(solver_cfg.get("num_turbines", 1))
+    blades = int(config.get("turbine", {}).get("B", 3))
+    
+    # Cálculo do Raio
+    radius = round(chord * blades / solidity, 4)
+
+    fixed_param = str(solver_cfg.get("fixed_parameter", "vinf")).lower()
+    var_omega_vinf = 0 if fixed_param == "vinf" else 1
+
+    config['turbine']['chord'] = [chord] * num_turbines
+    config['turbine']['solidity'] = [solidity] * num_turbines
+    config['environment']['Vinf'] = [vinf] if isinstance(config['environment']['Vinf'], list) else vinf
+    config['turbine']['r'] = radius
+
+    case_name = f'{airfoil_name}_turb{num_turbines}_b{blades}_r{radius}_ch{chord}_sol{solidity}_vinf{vinf}'.replace('.', 'p')
+
+    context = initialize_turbine_and_environment(config)
+    start_time = time.perf_counter()
+
+    try:
+        logger.info(f"Simulating {num_turbines} turbine(s) [B={blades}, R={radius}m] using case: {case_name}")
+
+        n_points = 20
+        tsr_vec = np.linspace(1.0, 7.0, n_points)
+        
+        cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec = _execute_tsr_sweep(
+            turbines=context.turbines,
+            env=context.env,
+            ntheta=context.ntheta,
+            tsr_vec=tsr_vec,
+            var_omega_vinf=var_omega_vinf,
+            vinf=vinf,
+            radius=context.radius,
+            num_turbines=num_turbines
+        )
+
+        elapsed = time.perf_counter() - start_time
+
+        # Exporta tudo para a subpasta do caso respeitando as opções do config.yaml
+        export_coupled_case_results(
+            case_name=case_name,
+            config=config,
+            turbines=context.turbines,
+            tsr_vec=tsr_vec,
+            cp_vec=cp_vec,
+            ct_vec=ct_vec,
+            rp_vec=rp_vec,
+            tp_vec=tp_vec,
+            zp_vec=zp_vec,
+            base_results_dir='results'
+        )
+
+        return {
+            'name': case_name,
+            'airfoil': airfoil_name,
+            'num_turbines': num_turbines,
+            'blades': blades,
+            'radius': radius,
+            'chord': chord,
+            'solidity': solidity,
+            'vinf': vinf,
+            'status': 'OK',
+            'time_sec': round(elapsed, 2)
+        }
+        
+    except Exception as err:
+        logger.error(f"Execution crashed for case {case_name}.", exc_info=True)
+        raise
+
 
 def main() -> None:
     """Main execution thread."""

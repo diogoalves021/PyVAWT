@@ -9,6 +9,10 @@ from tabulate import tabulate
 
 from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil
 
+import csv
+from pathlib import Path
+import matplotlib.pyplot as plt
+
 def load_config(path):
     '''
     Loads the simulation configuration from a YAML file and returns it as a dictionary.
@@ -59,6 +63,8 @@ def save_config(config, path):
     - Forces the file extension to .yaml if not present.
     - Uses indentation for human-readable output.
     '''
+    path = str(path)
+
     if not path.endswith('.yaml'):
         path += '.yaml'
 
@@ -324,3 +330,63 @@ def print_simulation_results(results, start_time, log_path):
     print()
     print(f"Log file       : {log_path}")
     print("=" * 40)
+
+def setup_output_dir(base_path: str, run_name: str) -> Path:
+    """Cria e retorna o diretório de saída com suporte a caminhos dinâmicos."""
+    out_dir = Path(base_path) / run_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+def export_2d_results(results: list, config: dict, output_dir: str = "results/2D"):
+    """Salva os resultados da varredura/batch 2D."""
+    if not results:
+        return
+
+    out_path = setup_output_dir(output_dir, "batch_execution")
+
+    # 1. Salva log CSV
+    csv_file = out_path / "log_simulacoes.csv"
+    fieldnames = list(results[0].keys())
+    with open(csv_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(results)
+
+    # 2. Salva cópia do config
+    save_config(config, out_path / "config_used.yaml")
+
+    print(f"[IO] Resultados 2D salvos em: {out_path.resolve()}")
+
+
+def export_3d_results(
+    tsr: np.ndarray, cp_3d: np.ndarray, config: dict, output_dir: str
+):
+    """Salva dados, gráficos e o config da simulação 3D."""
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # 1. Salva arquivo .dat
+    data_to_save = np.column_stack((tsr, cp_3d))
+    np.savetxt(
+        out_path / "results_3D.dat",
+        data_to_save,
+        header="TSR\tCp_3D",
+        fmt="%.6f",
+        delimiter="\t",
+    )
+
+    # 2. Salva gráfico
+    plt.figure()
+    plt.plot(tsr, cp_3d, "b-o", label="$C_p$ 3D")
+    plt.xlabel("TSR")
+    plt.ylabel("$C_p$ 3D")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(out_path / "cp_curve_3D.png", dpi=300)
+    plt.close()
+
+    # 3. Copia config
+    save_config(config, str(out_path / "config_used.yaml"))
+
+    print(f"[IO] Resultados 3D salvos em: {out_path.resolve()}")

@@ -14,6 +14,8 @@ from src.pyvawt.single.utils import (
     print_simulation_footer,
     print_simulation_results,
     format_time,
+    export_3d_results,
+    export_2d_results
 )
 #run command: uv run python3 -m src.pyvawt.single.main
 # test/data/config.yaml src/pyvawt/config/config.yaml
@@ -43,7 +45,18 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
         print("3D simulation mode ENABLED")
         print("==============================\n")
 
-        simulate_3D_turbine(config, stall_angles)
+        #simulate_3D_turbine(config, stall_angles)
+
+        # 1. Executa o cálculo físico
+        res_3d = simulate_3D_turbine(config, stall_angles)
+        
+        # 2. Delega o salvamento para o exporter
+        export_3d_results(
+            tsr=res_3d['tsr'], 
+            cp_3d=res_3d['cp_3d'], 
+            config=config, 
+            output_dir=res_3d['result_dir']
+        )
 
         print("\n3D simulation finished.\n")
 
@@ -139,13 +152,15 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
 
     print()
 
-    log_path = os.path.join('src/results/temporary_results', 'log_simulacoes.csv')
+    log_path = export_2d_results(results, config)
+
+    '''log_path = os.path.join('src/results/temporary_results', 'log_simulacoes.csv')
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=results[0].keys())
         writer.writeheader()
         writer.writerows(results)
-
+    '''
     # Summary
     print_simulation_results(results, start_time, log_path)
 
