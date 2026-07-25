@@ -1,4 +1,4 @@
-from numba import jit
+import numba as nb
 import numpy as np
 import math
 import os
@@ -10,163 +10,80 @@ import copy
 from scipy.integrate import quad
 from scipy.optimize import root
 import matplotlib.pyplot as plt
+from scipy.interpolate import RegularGridInterpolator
 
 from src.pyvawt.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
 from src.pyvawt.submodels.boeing_vertol import af, Boeing_Vertol
 from src.pyvawt.single.data_reading import readaerodyn
 from src.pyvawt.single.utils import save_config, format_time
 from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil
-from src.pyvawt.single.utils import load_config, get_tc_from_airfoil, detect_stall_angles, save_config
+from src.pyvawt.single.utils import load_config, get_tc_from_airfoil, detect_stall_angles, save_config, resolve_turbine_geometry
 
 # Coefficients of influence
-# @jit
-def panelIntegration(xvec, yvec, thetavec, ifunc):
-    '''
-    Perform panel integration to compute influence coefficients.
-
-    This function applies for both Ay and Dx depending on the function passed.
-    
-    Parameters
-    ----------
-    xvec : ndarray
-        Array of x-coordinates of the panels.
-        
-    yvec : ndarray
-        Array of y-coordinates of the panels.
-        
-    thetavec : ndarray
-        Array of angles (in radians) at which the integration is performed.
-        
-    ifunc : Callable
-        The integrand function to be used for integration (either for Ay or Dx).
-        
-    Returns
-    -------
-    A : ndarray
-        The result of the integration, with shape (nx, ntheta), where nx is the
-        number of panels and ntheta is the number of integration points.
-    '''
-    #Inicializar
-    nx = len(xvec)
-    ntheta = len(thetavec)
-    dtheta = thetavec[1] - thetavec[0] # Assumes equally spaced angles
-    A = np.zeros((nx, ntheta))
-
-    for i in range(nx):
-        # Redefine the function for use in integration
-        def integrand(phi):
-            return ifunc(xvec[i], yvec[i], phi)
-
-        for j in range(ntheta):
-            # Perform adaptive integration
-            result, error = quad(
-                integrand,
-                thetavec[j] -dtheta / 2,
-                thetavec[j] + dtheta / 2,
-                epsabs=1e-10
-            )
-            A[i, j] = result
-
-    return A
-@jit
+@nb.njit(fastmath=True)
 def Dxintegrand(x, y, phi):
     '''
     Integrand function for computing Dx.
-
-    Parameters
-    ----------
-    x : float
-        x-coordinate of the point.
-        
-    y : float
-        y-coordinate of the point.
-        
-    phi : float
-        Angle of integration (in radians).
-        
-    Returns
-    -------
-    float
-        The value of the integrand at the given point and angle.
     '''
-    v1 = x + math.sin(phi)
-    v2 = y - math.cos(phi)
+    v1 = x + np.sin(phi)
+    v2 = y - np.cos(phi)
+    # Nota: O print(v1, v2) foi removido pois causava travamento extremo de I/O em loops
+    return (v1 * np.sin(phi) - v2 * np.cos(phi)) / (2.0 * np.pi * (v1 * v1 + v2 * v2))
 
-    print(v1, v2)
-    # v1 and v2 must not be zero because we never integrate self. RxII handles this situation.
-    return (v1 * math.sin(phi) - v2 * math.cos(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
-@jit
+@nb.njit(fastmath=True)
 def Ayintegrand(x, y, phi):
     '''
     Integrand function for computing Ay.
-
-    Parameters
-    ----------
-    x : float
-        x-coordinate of the point.
-        
-    y : float
-        y-coordinate of the point.
-        
-    phi : float
-        Angle of integration (in radians).
-        
-    Returns
-    -------
-    float
-        The value of the integrand at the given point and angle.
     '''
-    v1 = x + math.sin(phi)
-    v2 = y - math.cos(phi)
+    v1 = x + np.sin(phi)
+    v2 = y - np.cos(phi)
     if abs(v1) < 1e-12 and abs(v2) < 1e-12:
-        # Occurs when integrating self; the function is symmetric around the singularity and should integrate to zero
         return 0.0
-    return (v1 * math.cos(phi) + v2 * math.sin(phi)) / (2 * math.pi * (v1 * v1 + v2 * v2))
-# @jit
+    return (v1 * np.cos(phi) + v2 * np.sin(phi)) / (2.0 * np.pi * (v1 * v1 + v2 * v2))
+
+@nb.njit(fastmath=True)
+def panelIntegration(xvec, yvec, thetavec, ifunc, n_substeps=16):
+    '''
+    Perform panel integration to compute influence coefficients using 
+    Composite Trapezoidal rule compiled in C via Numba.
+    '''
+    nx = len(xvec)
+    ntheta = len(thetavec)
+    dtheta = thetavec[1] - thetavec[0]
+    A = np.zeros((nx, ntheta), dtype=np.float64)
+
+    for i in range(nx):
+        x = xvec[i]
+        y = yvec[i]
+        for j in range(ntheta):
+            # Limites de integração do painel j
+            a = thetavec[j] - dtheta / 2.0
+            b = thetavec[j] + dtheta / 2.0
+            h = (b - a) / n_substeps
+            
+            # Regra trapezoidal composta sobre 'ifunc'
+            sum_val = 0.5 * (ifunc(x, y, a) + ifunc(x, y, b))
+            for k in range(1, n_substeps):
+                sum_val += ifunc(x, y, a + k * h)
+                
+            A[i, j] = sum_val * h
+
+    return A
+
+@nb.njit(fastmath=True)
 def AyIJ(xvec, yvec, thetavec):
     '''
     Compute AyIJ by integrating with the Ayintegrand function.
-
-    Parameters
-    ----------
-    xvec : ndarray
-        Array of x-coordinates of the panels.
-        
-    yvec : ndarray
-        Array of y-coordinates of the panels.
-        
-    thetavec : ndarray
-        Array of angles (in radians) at which the integration is performed.
-        
-    Returns
-    -------
-    Ay : ndarray
-        The result of the Ay integration for each panel.
     '''
     return panelIntegration(xvec, yvec, thetavec, Ayintegrand)
-# @jit
+
+@nb.njit(fastmath=True)
 def DxIJ(xvec, yvec, thetavec):
     '''
     Compute DxIJ by integrating with the Dxintegrand function.
-
-    Parameters
-    ----------
-    xvec : ndarray
-        Array of x-coordinates of the panels.
-        
-    yvec : ndarray
-        Array of y-coordinates of the panels.
-        
-    thetavec : ndarray
-        Array of angles (in radians) at which the integration is performed.
-        
-    Returns
-    -------
-    Dx : ndarray
-        The result of the Dx integration for each panel.
     '''
     return panelIntegration(xvec, yvec, thetavec, Dxintegrand)
-@jit
+
 def WxIJ(xvec, yvec, thetavec):
     '''
     Compute WxIJ by processing the x and y coordinates to determine influence of panels.
@@ -208,7 +125,7 @@ def WxIJ(xvec, yvec, thetavec):
                 Wx[i, ntheta - k - 1] = 1.0
 
     return Wx
-@jit
+@nb.jit
 def DxII(thetavec):
     '''
     Compute DxII based on the given angles.
@@ -237,7 +154,7 @@ def DxII(thetavec):
             Rx[i, i] = (1 + 1.0 / ntheta) / 2.0
 
     return Rx
-@jit
+@nb.jit
 def WxII(thetavec):
     '''
     Generate the Wx matrix for a given set of angular divisions.
@@ -419,40 +336,123 @@ class Aerodynamics:
             (Cl, Cd)
         '''
         raise NotImplementedError("Subclasses must implement this method.")
+
+@nb.njit(fastmath=True)
+def interpolate_2d_lut(alpha_vec, W_vec, alpha_grid, W_grid, table):
+    n = len(alpha_vec)
+    out = np.empty(n, dtype=np.float64)
     
+    n_alpha = len(alpha_grid)
+    n_w = len(W_grid)
+    
+    d_alpha = alpha_grid[1] - alpha_grid[0]
+    d_w = W_grid[1] - W_grid[0]
+    
+    alpha_min, alpha_max = alpha_grid[0], alpha_grid[-1]
+    w_min, w_max = W_grid[0], W_grid[-1]
+
+    for i in range(n):
+        # Mapeia alpha para [-pi, pi]
+        a = (alpha_vec[i] + np.pi) % (2.0 * np.pi) - np.pi
+        w = W_vec[i]
+        
+        # Busca de índice para alpha
+        if a <= alpha_min:
+            ia = 0; u = 0.0
+        elif a >= alpha_max:
+            ia = n_alpha - 2; u = 1.0
+        else:
+            pos_a = (a - alpha_min) / d_alpha
+            ia = int(pos_a)
+            u = pos_a - ia
+            
+        # Busca de índice para W
+        if w <= w_min:
+            iw = 0; v = 0.0
+        elif w >= w_max:
+            iw = n_w - 2; v = 1.0
+        else:
+            pos_w = (w - w_min) / d_w
+            iw = int(pos_w)
+            v = pos_w - iw
+            
+        # Interpolação bilinear
+        f00 = table[ia, iw]
+        f10 = table[ia + 1, iw]
+        f01 = table[ia, iw + 1]
+        f11 = table[ia + 1, iw + 1]
+        
+        out[i] = (1.0 - u) * (1.0 - v) * f00 + u * (1.0 - v) * f10 + (1.0 - u) * v * f01 + u * v * f11
+
+    return out
+
+# Dicionário global para armazenar as tabelas na memória RAM
+_AERO_LUT_CACHE = {}
+
 class NeuralFoilAerodynamics(Aerodynamics):
     '''
-    Aerodynamics model using a neural network (NeuralFoil) to calculate Cl and Cd.
-
-    Parameters
-    ----------
-    turbine_index : int
-        Turbine index used to access neural network training data.
-    airfoil_index : int
-        Airfoil index.
+    Modelo aerodinâmico otimizado com Tabela de Busca e Cache de Memória.
     '''
-    def __init__(self,  turbine_index, airfoil_index):
+    def __init__(self, turbine_index, airfoil_index, config=None, n_alpha=721, n_W=50, W_min=0.1, W_max=150.0):
         self.turbine_index = turbine_index
         self.airfoil_index = airfoil_index
+        self.W_min = W_min
+        self.W_max = W_max
+
+        if config is None:
+            try:
+                config = load_config()
+            except TypeError:
+                config = load_config('src/pyvawt/config/config.yaml')
+
+        airfoil_cfg = config['solver']['neuralfoil']['airfoil']
+        airfoil_name = airfoil_cfg[airfoil_index] if isinstance(airfoil_cfg, (list, tuple)) else airfoil_cfg
+
+        chord_cfg = config['turbine']['chord']
+        chord = chord_cfg[turbine_index] if isinstance(chord_cfg, (list, tuple)) else chord_cfg
+        rho = config['environment']['rho']
+        mu = config['environment']['mu']
+
+        cache_key = (airfoil_name, chord, rho, mu, n_alpha, n_W, W_min, W_max)
+
+        # 1. VERIFICA SE A TABELA JÁ ESTÁ NO CACHE
+        if cache_key in _AERO_LUT_CACHE:
+            self.alpha_grid, self.W_grid, self.cl_table, self.cd_table = _AERO_LUT_CACHE[cache_key]
+        else:
+            # 2. SE FOR A PRIMEIRA VEZ, CALCULA E GUARDA AS MATRIZES
+            print(f"--> [NeuralFoil LUT] Criando nova tabela para '{airfoil_name}' (c={chord}m)...", flush=True)
+            self.alpha_grid = np.linspace(-np.pi, np.pi, n_alpha)
+            self.W_grid = np.linspace(W_min, W_max, n_W)
+
+            self.cl_table = np.zeros((n_alpha, n_W), dtype=np.float64)
+            self.cd_table = np.zeros((n_alpha, n_W), dtype=np.float64)
+
+            for j, W_val in enumerate(self.W_grid):
+                cl_vec, cd_vec = get_cl_cd_neuralfoil(self.alpha_grid, W_val, turbine_index, airfoil_index)
+                self.cl_table[:, j] = cl_vec
+                self.cd_table[:, j] = cd_vec
+
+            _AERO_LUT_CACHE[cache_key] = (self.alpha_grid, self.W_grid, self.cl_table, self.cd_table)
 
     def get_cl_cd(self, alpha, W):
-        '''
-        Returns Cl and Cd using the neural network model.
+        # Garante alinhamento de formatos e converte para vetores 1D contínuos
+        alpha_arr = np.atleast_1d(np.asarray(alpha, dtype=np.float64))
+        W_arr = np.atleast_1d(np.asarray(W, dtype=np.float64))
 
-        Parameters
-        ----------
-        alpha : float
-            Angle of attack [rad].
-        W : float
-            Relative wind speed [m/s].
+        alpha_b, W_b = np.broadcast_arrays(alpha_arr, W_arr)
+        alpha_flat = alpha_b.ravel()
+        W_flat = W_b.ravel()
 
-        Returns
-        -------
-        tuple of floats
-            (Cl, Cd)
-        '''
-        return get_cl_cd_neuralfoil(alpha, W, self.turbine_index, self.airfoil_index)
-    
+        # Chama diretamente o kernel Numba passando os 5 argumentos corretos
+        cl_flat = interpolate_2d_lut(alpha_flat, W_flat, self.alpha_grid, self.W_grid, self.cl_table)
+        cd_flat = interpolate_2d_lut(alpha_flat, W_flat, self.alpha_grid, self.W_grid, self.cd_table)
+
+        # Retorna escalares ou matrizes conforme a entrada original
+        if np.isscalar(alpha) and np.isscalar(W):
+            return cl_flat[0], cd_flat[0]
+        
+        return cl_flat.reshape(alpha_b.shape), cd_flat.reshape(alpha_b.shape)
+
 class FileAerodynamics(Aerodynamics):
     '''
     Aerodynamics model using airfoil data from a file to calculate Cl and Cd.
@@ -943,36 +943,35 @@ def initialize_turbine_and_environment(config):
     """
     turbine_params = config['turbine']
     environment_params = config['environment']
-    simulation_params = config['solver']
+    simulation_params = config.get('solver', {})
 
-    # Remove dependency on get_radius_from_config
-    r = turbine_params['r']
+    # 1. Enforce geometric consistency and scalar types for r, chord, and solidity
+    r, chord, solidity = resolve_turbine_geometry(turbine_params, verbose=True)
 
+    # 2. Extract turbine geometric & operational parameters (ensuring twist & delta are defined!)
     twist = turbine_params['twist']
     delta = turbine_params['delta']
-    
-    chord = np.array(turbine_params['chord'])
     B = turbine_params['B']
-    solidity = np.array(turbine_params['solidity'])
-    
     centerX = turbine_params['centerX']
     centerY = turbine_params['centerY']
-    Omega = turbine_params['Omega']
-    ntheta = turbine_params['ntheta']
-
+    
+    # Ensure Omega is a clean scalar float
+    Omega = float(np.squeeze(turbine_params['Omega']))
+    
+    # 3. Extract environment parameters
     Vinf = np.array(environment_params['Vinf'])
     rho = environment_params['rho']
     mu = environment_params['mu']
 
+    # 4. Instantiate objects safely
     turbine = Turbine(r, chord, twist, delta, B, Omega, centerX, centerY, solidity)
     env = Environment(Vinf, rho, mu)
 
-    solver_params = config.get('solver', {})
-    method = solver_params.get('method', 'neuralfoil')
+    # 5. Configure Aerodynamics Solver
+    method = simulation_params.get('method', 'neuralfoil')
     
     if method == 'file':
-        # Safely extract the nested 'path' parameter from 'file'
-        file_cfg = solver_params.get('file', {})
+        file_cfg = simulation_params.get('file', {})
         filename = file_cfg.get('path') if isinstance(file_cfg, dict) else None
         
         if not filename:
@@ -981,6 +980,8 @@ def initialize_turbine_and_environment(config):
         turbine.aero = FileAerodynamics(filename)
     else:
         turbine.aero = None
+
+    ntheta = turbine_params.get('ntheta', 360)
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
@@ -1056,9 +1057,10 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     config['turbine']['chord'] = chord
     config['turbine']['solidity'] = solidity
     config['environment']['Vinf'] = vinf
+
+    turbine, env, _, _, _, r, ntheta = initialize_turbine_and_environment(config)
     angular_velocity = config['turbine']['Omega']
     delta = config['turbine']['delta']
-    r = config['turbine']['r']
 
     # SUBMODEL SETUP (FLOW CURVATURE)
     if flow_cfg is None:
@@ -1101,16 +1103,13 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             return val[0]
         except (TypeError, IndexError):
             return val
-
-    # Instantiate core turbine and environmental objects
-    turbine, env, _, _, _, _, _ = initialize_turbine_and_environment(config)
-    
+ 
     fixed_parameter = config['solver']['fixed_parameter']
     ntheta = config['turbine']['ntheta']
     aero_method = config.get('solver', {}).get('method', 'neuralfoil')
 
     if aero_method == 'neuralfoil':
-        turbine.aero = NeuralFoilAerodynamics(turbine_index=turbine_index, airfoil_index=airfoil_index)
+        turbine.aero = NeuralFoilAerodynamics(turbine_index=turbine_index, airfoil_index=airfoil_index, config=config)
 
     if stall_angles is None:
         raise ValueError('Stall angles must be provided')
@@ -1313,7 +1312,7 @@ def simulate_3D_turbine(base_config, stall_angles):
         return
 
     # AJUSTE CONFIG: Extração de parâmetros usando a nova subchave 'settings' e 'vertical_layers'
-    height = sim3d_settings.get('height', 20.0)
+    height = float(base_config.get('turbine', {}).get('height', 20.0))
     n_slices = sim3d_settings.get('vertical_layers', 20)
     velocity_profile = sim3d_settings.get('velocity_profile', 'constant')
 

@@ -390,3 +390,58 @@ def export_3d_results(
     save_config(config, str(out_path / "config_used.yaml"))
 
     print(f"[IO] Resultados 3D salvos em: {out_path.resolve()}")
+
+def resolve_turbine_geometry(turbine_params, verbose=True):
+    """
+    Sincroniza e garante a consistência física entre B, corda, solidez e raio (R).
+    Garante que os retornos sejam rigorosamente escalares do tipo float.
+    """
+    B = float(np.squeeze(turbine_params['B']))
+    chord = float(np.squeeze(turbine_params['chord']))
+    r_yaml = turbine_params.get('r')
+
+    # Case A: Solidity is provided (Sweep or explicit configuration)
+    if 'solidity' in turbine_params and turbine_params['solidity'] is not None:
+        solidity = float(np.squeeze(turbine_params['solidity']))
+        r = float((B * chord) / solidity)
+        
+        if verbose:
+            if r_yaml is not None:
+                r_yaml_val = float(np.squeeze(r_yaml))
+                if abs(r_yaml_val - r) > 1e-3:
+                    print(
+                        f"--> [WARNING] Solidity ({solidity}) took priority: "
+                        f"YAML radius ({r_yaml_val:.2f} m) was overridden to {r:.2f} m.",
+                        flush=True
+                    )
+                else:
+                    print(
+                        f"--> [INFO] Geometry consistent: R = {r:.2f} m, σ = {solidity:.4f}",
+                        flush=True
+                    )
+            else:
+                print(
+                    f"--> [INFO] Radius calculated from solidity: R = {r:.2f} m (σ = {solidity:.4f})",
+                    flush=True
+                )
+
+    # Case B: Only Radius is provided
+    else:
+        if r_yaml is None:
+            raise ValueError("Configuration Error: Provide at least Radius ('r') or Solidity ('solidity').")
+        
+        r = float(np.squeeze(r_yaml))
+        solidity = float((B * chord) / r)
+        
+        if verbose:
+            print(
+                f"--> [INFO] Solidity calculated from radius: σ = {solidity:.4f} (R = {r:.2f} m)",
+                flush=True
+            )
+
+    # Sanitize dictionary values as clean float scalars
+    turbine_params['r'] = r
+    turbine_params['chord'] = chord
+    turbine_params['solidity'] = solidity
+
+    return r, chord, solidity
