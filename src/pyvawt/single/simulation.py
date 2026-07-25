@@ -5,6 +5,7 @@ import os
 import h5py
 import csv
 import time
+from datetime import timedelta
 import traceback
 import copy
 from scipy.integrate import quad
@@ -13,7 +14,8 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
 
 from src.pyvawt.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
-from src.pyvawt.submodels.boeing_vertol import af, Boeing_Vertol
+#from src.pyvawt.submodels.boeing_vertol import af, Boeing_Vertol
+from src.pyvawt.submodels.boeing_vertol import boeing_vertol_jit, interp2d_scalar
 from src.pyvawt.single.data_reading import readaerodyn
 from src.pyvawt.single.utils import save_config, format_time
 from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil
@@ -504,259 +506,147 @@ class Environment:
         self.BV_DynamicFlagL = 0
         self.BV_DynamicFlagD = 0
 
+
+# 1. Integração Trapezoidal Rápida em C
+@nb.njit(fastmath=True)
 def fast_trapz(y, x):
-    """
-    Integração trapezoidal 1D ultra-rápida.
-    Evita todo o overhead de validação de eixos e dimensões do scipy/numpy.
-    Utiliza np.dot para calcular o acumulado diretamente em C.
-    """
-    return 0.5 * np.dot(y[:-1] + y[1:], np.diff(x))
+    n = len(x)
+    integral = 0.0
+    for i in range(n - 1):
+        integral += 0.5 * (y[i] + y[i + 1]) * (x[i + 1] - x[i])
+    return integral
 
 
-def radialforce(uvec, vvec, thetavec, turbine: Turbine, env: Environment,
-                config, turbine_index, airfoil_index, flow_manager, z=None, H=None):
-    '''
-    Calculate aerodynamic forces and performance coefficients for a Vertical Axis Wind Turbine (VAWT)
-    using the actuator cylinder method.
+# 2. Kernel Matemático Denso (100% Numba @njit)
+@nb.njit(fastmath=True)
+def _radialforce_kernel(
+    uvec, vvec, thetavec,
+    r, chord, twist, delta, B, Omega, solidity,
+    Vinf, rho, mu,
+    alpha_grid, W_grid, cl_table, cd_table,
+    use_dynamic_stall, aoa_stall_pos, aoa_stall_neg, AOA0, tc
+):
+    n = len(thetavec)
+    dtheta = thetavec[1] - thetavec[0] if n > 1 else 0.0
+    rotation = 1.0 if Omega >= 0 else -1.0
+    abs_Omega = abs(Omega)
 
-    This function computes aerodynamic forces based on the specified method for obtaining
-    lift (Cl) and drag (Cd) coefficients:
-    
-    - "neuralfoil": Uses a neural network model to predict Cl and Cd.
-    - "file": Uses precomputed airfoil polars read from a file and interpolated.
-
-    Parameters
-    ----------
-    uvec : ndarray
-        Axial induction factor as a function of azimuthal angle (unitless).
-    vvec : ndarray
-        Tangential induction factor as a function of azimuthal angle (unitless).
-    thetavec : ndarray
-        Azimuthal angle vector [rad].
-    turbine : Turbine
-        Turbine object containing geometry and operational parameters.
-    env : Environment
-        Environment object containing wind speed and air properties.
-    config : dict
-        Simulation configuration dictionary, including aerodynamic method selection.
-    turbine_index : int
-        Turbine index (used for multi-turbine simulations).
-    airfoil_index : int
-        Airfoil index (used with the "neuralfoil" method).
-
-    Returns
-    -------
-    q : ndarray
-        Local force coefficient per unit length.
-    ka : float
-        Correction factor for nonlinear effects and induction.
-    CT : float
-        Thrust coefficient.
-    CP : float
-        Power coefficient.
-    Rp : ndarray
-        Radial (normal) force per unit span along the azimuth [N/m].
-    Tp : ndarray
-        Tangential force per unit span along the azimuth [N/m].
-    Zp : ndarray
-        Axial force per unit span along the azimuth [N/m].
-
-    Notes
-    -----
-    - The aerodynamic coefficient calculation method is defined by ``config['aero']['method']``.
-    - Two correction models for the induction factor ``ka`` are implemented: a piecewise analytical model (active)
-      and an alternative polynomial fit (commented out for reference).
-    ''' 
-    # Unpacking turbine and environment parameters
-    r = turbine.r              # Rotor radius
-    chord = turbine.chord      # Blade chord length
-    twist = turbine.twist      
-    delta = turbine.delta      
-    B = turbine.B              # Number of blades
-    Omega = turbine.Omega      # Rotational speed (rad/s)
-    solidity = turbine.solidity
-    Vinf = env.Vinf            # Freestream wind speed
-    rho = env.rho              # Air density
-
-    # Direction of rotation: +1 or -1
-    rotation = np.sign(Omega)
-
-    # Normal (Vn) and tangential (Vt) components of relative velocity
+    # A. Triângulo de Velocidades e Ângulo de Ataque
     Vn = Vinf * (1.0 + uvec) * np.sin(thetavec) - Vinf * vvec * np.cos(thetavec)
-    Vt = (rotation * (Vinf * (1.0 + uvec) * np.cos(thetavec) + Vinf * vvec * np.sin(thetavec)) + abs(Omega) * r)
+    Vt = rotation * (Vinf * (1.0 + uvec) * np.cos(thetavec) + Vinf * vvec * np.sin(thetavec)) + abs_Omega * r
 
-    W = np.sqrt(Vn**2 + Vt**2) # Magnitude of relative wind velocity
-    phi = np.arctan2(Vn, Vt) # Flow angle (between rotor plane and relative velocity)
-    alpha = phi - turbine.twist # Angle of attack (flow angle minus blade pitch)
-    
-    if flow_manager is None:
-        alpha_corr = alpha
-    else:
-        alpha_corr = flow_manager.corrected_flow(alpha, Omega, W)
- 
-    # Lift and drag coefficients from airfoil function
-    cl = np.zeros_like(alpha)
-    cd = np.zeros_like(alpha)
-    cm = np.zeros_like(alpha)
+    W = np.sqrt(Vn**2 + Vt**2)
+    phi = np.arctan2(Vn, Vt)
+    alpha = phi - twist
 
-    aero_cfg = config.get('solver', {}).get('aero', config.get('aero', {}))
-    use_dynamic_stall = aero_cfg.get('dynamic_stall', True)
-    
-    sim3d_cfg = config.get('solver', {}).get('simulation3d', config.get('simulation', {}).get('simulation3d', {}))
-    use_tip_loss = sim3d_cfg.get('tip_loss', False)
+    # B. Interpolação Estática dos Coeficientes (via LUT)
+    cl_stat = np.empty(n, dtype=np.float64)
+    cd_stat = np.empty(n, dtype=np.float64)
+    cm_stat = np.zeros(n, dtype=np.float64)
 
+    for i in range(n):
+        cl_stat[i] = interp2d_scalar(alpha[i], W[i], alpha_grid, W_grid, cl_table)
+        cd_stat[i] = interp2d_scalar(alpha[i], W[i], alpha_grid, W_grid, cd_table)
+
+    # C. Aplicação do Stall Dinâmico (Boeing-Vertol)
+    cl = cl_stat.copy()
+    cd = cd_stat.copy()
+    cm = cm_stat.copy()
 
     if use_dynamic_stall:
+        dt = dtheta / abs_Omega if abs_Omega > 1e-6 else 1.0
+        flagL = 0
+        flagD = 0
 
-        # Angular derivative
-        # d(alpha)/d(theta) 
-        dalpha_dtheta = np.gradient(alpha, thetavec, edge_order=2)
-        
-        # d(alpha)/dt
-        adot = Omega * dalpha_dtheta
+        for i in range(n):
+            # Derivada temporal do ângulo de ataque d(alpha)/dt
+            i_prev = n - 1 if i == 0 else i - 1
+            dalpha_dt = (alpha[i] - alpha[i_prev]) / dt
+            w_val = W[i] if W[i] > 1e-6 else 1e-6
+            adotnorm = (dalpha_dt * chord) / (2.0 * w_val)
+            umach = w_val / 343.0
 
-        # Normalized alpha
-        adotnorm = adot * chord / (2.0 * W)
+            # Chamada direta do kernel do Boeing-Vertol
+            c_l, c_d, c_m, flagL, flagD = boeing_vertol_jit(
+                cl_stat[i], cd_stat[i], cm_stat[i],
+                alpha[i], adotnorm, umach, w_val,
+                aoa_stall_pos, aoa_stall_neg, AOA0, tc,
+                flagL, flagD,
+                alpha_grid, W_grid, cl_table, cd_table
+            )
+            cl[i] = c_l
+            cd[i] = c_d
+            cm[i] = c_m
 
-        # Local Reynolds
-        Re = rho * W * chord / env.mu
+    # D. Cálculo de Coeficientes Normais/Tangenciais e Solidez
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    cn = cl * cos_phi + cd * sin_phi
+    ct = cl * sin_phi - cd * cos_phi
 
-        # Local mach 
-        v_sound = 340.0
-        umach = W / v_sound
+    sigma_r = B * chord / r
+    sigma_D = B * chord / (2.0 * r)
+    sigma = sigma_r if abs(solidity - sigma_r) < abs(solidity - sigma_D) else 2.0 * solidity
 
-        # Uses boeing-Vertol dynamic stall correction
-        flagL = int(env.BV_DynamicFlagL)
-        flagD = int(env.BV_DynamicFlagD)
-        
-        airfoil_list = config.get('solver', {}).get('neuralfoil', {}).get('airfoil', config.get('simulation', {}).get('airfoil', []))
-        airfoil_name = airfoil_list[airfoil_index]
-        tc = get_tc_from_airfoil(airfoil_name)
+    q = sigma / (4.0 * np.pi) * cn * (W / Vinf)**2
 
-        # Calls neuralfoil or interpolate aero data
-        cl_static, cd_static = turbine.aero.get_cl_cd(alpha, W)
-        cm_static = np.zeros_like(cl_static)
+    # E. Decomposição de Forças Instantâneas
+    qdyn = 0.5 * rho * W**2
+    cos_delta = np.cos(delta)
+    tan_delta = np.tan(delta)
 
-        # Static AOA
-        aoaStallPos = turbine.aero.aoaStallPos
-        aoaStallNeg = turbine.aero.aoaStallNeg
-        
-        for i, a in enumerate(alpha):
-            try:
-                cl[i], cd[i], cm[i], flagL, flagD = Boeing_Vertol(
-                    cl_static[i],
-                    cd_static[i],
-                    cm_static[i],
-                    a,
-                    adotnorm[i],
-                    umach[i],
-                    Re[i],
-                    aoaStallPos,
-                    aoaStallNeg,
-                    0.0,       # AOA0
-                    tc,
-                    flagL,
-                    flagD,
-                    turbine,
-                    env,
-                    turbine_index,
-                    airfoil_index,
-                )
-            except Exception as e:
-                # Professional debug message
-                error_msg = (
-                    f"\n[ERROR] Boeing-Vertol calculation failed\n"
-                    f"Index: {i}\n"
-                    f"Alpha: {a:.6f} rad\n"
-                    f"Reynolds: {Re[i]:.2f}\n"
-                    f"Thickness/Chord: {tc:.2f}\n"
-                    f"Airfoil index: {airfoil_index}\n"
-                    f"Total alpha points: {len(alpha)}\n"
-                )
-                print(error_msg)
-                raise RuntimeError(error_msg) from e
+    Rp = -cn * qdyn * chord
+    Tp = ct * qdyn * chord / cos_delta
+    Zp = -cn * qdyn * chord * tan_delta
 
-        env.BV_DynamicFlagL = flagL
-        env.BV_DynamicFlagD = flagD
-
-    else:
-        # Calls neuralfoil or interpolate aero data
-        cl, cd = turbine.aero.get_cl_cd(alpha, W)
-
-    # Normal and tangential force coefficients in the rotor frame
-    cn = cl * np.cos(phi) + cd * np.sin(phi)
-    ct = cl * np.sin(phi) - cd * np.cos(phi)
-    
-    if use_tip_loss and z is not None and H is not None:
-        cn_corr, ct_corr, F = apply_tip_loss(cn, ct, z, H, turbine, env, Vinf, uvec)
-        
-        F_values = []
-        F_values.append(F)
-
-        print(
-            "Tip-loss:",
-            f"min={np.min(F_values):.3f}",
-            f"mean={np.mean(F_values):.3f}",
-            f"max={np.max(F_values):.3f}",
-        )
-
-    else:
-        cn_corr = cn
-        ct_corr = ct 
-  
-    # Automatically check if solidity is based on diameter or radius and use correct formulation
-    sigma_r = B * chord / r          # baseada no raio
-    sigma_D = B * chord / (2 * r)    # baseada no diâmetro
-
-    if abs(solidity - sigma_r) < abs(solidity - sigma_D):
-        sigma = sigma_r
-        # print('Solidez baseada no raio!')
-    else:
-        sigma = 2 * solidity  # converte para definição baseada no raio
-        # print('Solidez baseada no diâmetro!')
-
-    q = sigma / (4 * np.pi) * cn * (W / Vinf)**2 # Local thrust coefficient
-
-    # Instantaneous forces
-    qdyn = 0.5 * rho * W**2 # Dynamic pressure at each azimuthal position
-    Rp = -cn_corr * qdyn * chord # Radial (normal) force per unit span
-    Tp = ct_corr * qdyn * chord / np.cos(delta) # Tangential force per unit span (contributes to torque)
-    Zp = -cn_corr * qdyn * chord * np.tan(delta) # Axial force due to blade tilt
-
-
-    # Nonlinear correction factor for induction (ka)
-    integrand = (W / Vinf)**2 * (cn * np.sin(thetavec) - rotation * ct * np.cos(thetavec) / np.cos(delta))
-    CT = sigma / (4 * np.pi) * fast_trapz(integrand, thetavec)
+    # F. Integração Azimutal de CT e Fator ka
+    integrand = (W / Vinf)**2 * (cn * np.sin(thetavec) - rotation * ct * np.cos(thetavec) / cos_delta)
+    CT = sigma / (4.0 * np.pi) * fast_trapz(integrand, thetavec)
 
     if CT > 2.0:
         a = 0.5 * (1.0 + np.sqrt(1.0 + CT))
-        ka = 1.0 / (a - 1)
+        ka = 1.0 / (a - 1.0)
     elif CT > 0.96:
-        a = 1.0 / 7 * (1 + 3.0 * np.sqrt(7.0 / 2 * CT - 3))
-        ka = 18.0 * a / (7 * a**2 - 2 * a + 4)
+        a = (1.0 / 7.0) * (1.0 + 3.0 * np.sqrt(3.5 * CT - 3.0))
+        ka = 18.0 * a / (7.0 * a**2 - 2.0 * a + 4.0)
     else:
-        a = 0.5 * (1 - np.sqrt(1.0 - CT))
-        ka = 1.0 / (1 - a)
+        a = 0.5 * (1.0 - np.sqrt(1.0 - CT))
+        ka = 1.0 / (1.0 - a)
 
-    '''
-    # Alternative correction factor model (uncomment to use instead)
-    a=0.0892074*CT**3 + 0.0544955*CT**2 + 0.251163*CT - 0.0017077
-
-    if a <= 0.15:
-        ka = 1/(1-a)
-
-    elif a > 0.15:
-        ka = 1/(1-a)*(0.65 + 0.35*math.exp(-4.5*(a-0.15)))
-    #'''  
-
-    # Power coefficient (CP)
-    Href = 1.0                    # Rotor height (unit length)
-    Sref = 2 * r * Href           # Swept area
-    Q = r * Tp                 # Torque at each position
-    P = abs(Omega) * B / (2 * np.pi) * fast_trapz(Q, thetavec)  # Total power
-    CP = P / (0.5 * rho * Vinf**3 * Sref)  # Power coefficient
+    # G. Potência Integrada (CP)
+    Q = r * Tp
+    P = abs_Omega * B / (2.0 * np.pi) * fast_trapz(Q, thetavec)
+    CP = P / (0.5 * rho * (Vinf**3) * (2.0 * r))
 
     return q, ka, CT, CP, Rp, Tp, Zp, alpha, W
+
+
+# 3. Wrapper Python (Interface compatível com seu código original)
+def radialforce(uvec, vvec, thetavec, turbine, env, *args, use_dynamic_stall=True, **kwargs):
+    '''
+    Wrapper flexível para a função radialforce.
+    O '*args' garante compatibilidade com as chamadas 3D que enviam parâmetros adicionais
+    (config, turbine_index, airfoil_index, flow_manager, z, H).
+    '''
+    aero = turbine.aero
+
+    # Parâmetros geométricos/estáticos do perfil (com fallback de segurança)
+    aoa_stall_pos = float(getattr(aero, 'aoa_stall_pos', np.radians(12.0)))
+    aoa_stall_neg = float(getattr(aero, 'aoa_stall_neg', np.radians(-12.0)))
+    AOA0 = float(getattr(aero, 'AOA0', 0.0))
+    tc = float(getattr(aero, 'tc', 0.12))
+
+    # Executa o kernel C compilado em Numba
+    return _radialforce_kernel(
+        np.asarray(uvec, dtype=np.float64),
+        np.asarray(vvec, dtype=np.float64),
+        np.asarray(thetavec, dtype=np.float64),
+        float(turbine.r), float(turbine.chord), float(turbine.twist),
+        float(turbine.delta), int(turbine.B), float(turbine.Omega),
+        float(turbine.solidity), float(env.Vinf), float(env.rho), float(env.mu),
+        aero.alpha_grid, aero.W_grid, aero.cl_table, aero.cd_table,
+        bool(use_dynamic_stall), aoa_stall_pos, aoa_stall_neg, AOA0, tc
+    )
 
 '''
 def apply_tip_loss(cn, ct, z, H, turbine, env, Vinf, uvec):
@@ -985,40 +875,19 @@ def initialize_turbine_and_environment(config):
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
+def format_time(seconds):
+    """Auxiliar para formatar segundos em HH:MM:SS de forma amigável."""
+    if seconds is None or seconds < 0:
+        return "00:00"
+    return str(timedelta(seconds=round(seconds)))
+
+
 def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z=None, H=None):
     """
-    Executes a single aerodynamic simulation sweep for a Vertical-Axis Wind Turbine (VAWT).
-
-    This function sets up a specific turbine case based on input geometric and operational
-    parameters, configures optional submodels (such as Flow Curvature), sweeps across a range
-    of Tip Speed Ratios (TSR), and solves the rotor flow field using the Actuator Cylinder method.
-    The resulting performance curves ($C_p$ and $C_t$ vs. TSR) and azimuthal distribution
-    data are exported to disk according to the configuration settings.
-
-    Args:
-        params (tuple): Case parameters ordered as:
-            `(airfoil_index, turbine_index, chord, solidity, vinf)` where:
-                - airfoil_index (int): Index of the airfoil profile to evaluate.
-                - turbine_index (int): Index of the turbine configuration.
-                - chord (float): Blade chord length [m].
-                - solidity (float): Rotor solidity ratio ($\sigma = B c / R$).
-                - vinf (float): Free-stream wind velocity [m/s].
-        base_config (dict): Deep-copyable base configuration dictionary containing 
-            'turbine', 'environment', 'solver', 'submodels', and 'output' sections.
-        flow_cfg (dict, optional): Flow curvature configuration override. Defaults to None.
-        stall_angles (list of tuple, optional): Precomputed positive and negative stall 
-            angles `(aoaStallPos, aoaStallNeg)` per airfoil index. Required. Defaults to None.
-        z (float, optional): Vertical slice coordinate [m] for 3D multi-slice runs. Defaults to None.
-        H (float, optional): Total rotor height [m] for 3D multi-slice runs. Defaults to None.
-
-    Returns:
-        dict: Simulation output dictionary containing execution status, performance metrics,
-              and calculated force coefficients or error tracebacks.
-
-    Raises:
-        ValueError: If `stall_angles` is not provided.
-        ValueError: If `config['solver']['fixed_parameter']` is not 'vinf' or 'omega'.
+    Executa a simulação de um caso (2D ou fatia 3D).
     """
+    # 1. Inicia o cronômetro com perf_counter()
+    start_time = time.perf_counter()
 
     airfoil_index, turbine_index, chord, solidity, vinf = params
     config = copy.deepcopy(base_config)
@@ -1038,12 +907,10 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     dpi = plot_cfg.get('dpi', 300)
 
     # SIMULATION MODE & CP(THETA) RULE VALIDATION
-    # Check whether the current case is running under a 3D multi-slice domain
     is_3d_mode = config.get('simulation3d', {}).get('enabled', False) or (z is not None)
     cp_theta_cfg = output_cfg.get('cp_theta', {})
     cp_theta_requested = cp_theta_cfg.get('enabled', False)
     
-    # BUSINESS RULE: Cp(theta) extraction is strictly restricted to 2D simulations
     cp_theta_enabled = cp_theta_requested and not is_3d_mode
     if cp_theta_requested and is_3d_mode:
         print("--> [INFO] cp_theta extraction bypassed: Feature is only supported in 2D mode.", flush=True)
@@ -1075,11 +942,9 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     else:
         flow_manager = None
 
-    # Helper function for decimal formatting in string identifiers
     def fmt(val):
         return str(val).replace('.', 'p')
 
-    # Construct unique folder identifier for the case outputs
     folder_name = (
         f'{airfoil_name}_ch{fmt(chord)}_sol{fmt(solidity)}_vinf{fmt(vinf)}'
         f'_delta{fmt(delta)}_r{fmt(r)}'
@@ -1087,23 +952,19 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     result_dir = os.path.join('src/results/temporary_results', folder_name)
     config['output']['result_folder'] = folder_name
 
-    # Create destination directory if any saving option is enabled
     if save_results or save_config_used or save_plot:
         os.makedirs(result_dir, exist_ok=True)
-        print(f"--> [DEBUG] Output path: {os.path.abspath(result_dir)}")
 
-    # Archive active configuration settings
     if save_config_used:
         from src.pyvawt.single.utils import save_config
         save_config(config, os.path.join(result_dir, 'config_used.yaml'))
 
-    # Helper function to ensure scalar conversion
     def _to_scalar(val):
         try:
             return val[0]
         except (TypeError, IndexError):
             return val
- 
+
     fixed_parameter = config['solver']['fixed_parameter']
     ntheta = config['turbine']['ntheta']
     aero_method = config.get('solver', {}).get('method', 'neuralfoil')
@@ -1118,11 +979,9 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
     turbine.aero.aoaStallPos = aoaStallPos
     turbine.aero.aoaStallNeg = aoaStallNeg
 
-    start_time = time.time()
     try:
         print(f'Simulating: {folder_name}')
 
-        # TSR SWEEP VECTOR DISCRETIZATION
         tsr_cfg = config.get('solver', {}).get('tsr', {})
         tsr_min = float(tsr_cfg.get('min', 1.0))
         tsr_max = float(tsr_cfg.get('max', 7.0))
@@ -1132,8 +991,6 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
         CPvec, CTvec = np.zeros(n), np.zeros(n)
         Rpvec, Tpvec, Zpvec = np.zeros(n), np.zeros(n), np.zeros(n)
 
-        # TARGET TSR SELECTION
-        # Automatically identify the array index corresponding to the nearest TSR
         if cp_theta_enabled:
             target_idx = int(np.argmin(np.abs(tsrvec - target_tsr)))
             actual_target_tsr = tsrvec[target_idx]
@@ -1151,9 +1008,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
         has_plot_data = False
         theta_plot, cp_plot = None, None
 
-        # AERODYNAMIC SOLVER SWEEP LOOP
         for i, tsr in enumerate(tsrvec):
-            # Adjust kinematic parameter according to operational constraint
             if fixed_parameter == 'vinf':
                 turbine.Omega = vinf * tsr / _to_scalar(r)
             elif fixed_parameter == 'omega':
@@ -1162,7 +1017,6 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             else:
                 raise ValueError("Invalid value for 'fixed_parameter'. Use 'vinf' or 'omega'.")
 
-            # Execute Actuator Cylinder aerodynamic solver
             CT, CP, Rp, Tp_raw, Zp, theta = actuatorcylinder(
                 turbine, env, ntheta, config, turbine_index, airfoil_index, flow_manager, z, H
             )
@@ -1170,14 +1024,11 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             CPvec[i], CTvec[i] = CP, CT
             Rpvec[i], Tpvec[i], Zpvec[i] = _to_scalar(Rp), _to_scalar(Tp_raw), _to_scalar(Zp)
 
-            # AZIMUTHAL CP(THETA) EVALUATION
-            # Evaluated exclusively at the index nearest to target_tsr
             if cp_theta_enabled and i == target_idx:
                 theta_deg = np.degrees(theta)
                 Href = 1.0
                 Sref = 2 * _to_scalar(turbine.r) * Href
 
-                # Compute local power coefficient from tangential force distribution (Tp_raw)
                 Cp_theta = (abs(turbine.Omega) * _to_scalar(turbine.r) * Tp_raw) / (
                     0.5 * env.rho * _to_scalar(env.Vinf)**3 * Sref
                 )
@@ -1192,7 +1043,6 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
                         for th, cp in zip(theta_deg, Cp_theta_iterable):
                             f.write(f"{tsr:.6f}\t{th:.6f}\t{cp:.6f}\n")
 
-        # GLOBAL RESULTS EXPORT (Cp vs. TSR)
         data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
         header = 'TSR\tCP\tCT\tRp\tTp\tZp'
         if save_results:
@@ -1208,8 +1058,6 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
                         writer.writerow(header.split('\t'))
                     writer.writerows(data_to_save.tolist())
 
-        # FIGURE GENERATION AND EXPORT
-        # Primary plot: Performance curve (Cp vs. TSR)
         if save_plot:
             fig1 = plt.figure()
             plt.plot(tsrvec, CPvec, 'o-')
@@ -1222,7 +1070,6 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             fig1.savefig(os.path.join(result_dir, fig1_filename), format=image_format, dpi=dpi)
             plt.close(fig1)
 
-        # Secondary plot: Azimuthal power coefficient (Cp vs. Theta)
         if save_plot and cp_theta_enabled and save_cp_theta_plot and has_plot_data:
             fig2 = plt.figure()
             plt.plot(theta_plot, cp_plot, 'o-')
@@ -1236,7 +1083,7 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             fig2.savefig(os.path.join(result_dir, fig2_filename), format=image_format, dpi=dpi)
             plt.close(fig2)
 
-        elapsed = time.time() - start_time
+        elapsed = time.perf_counter() - start_time
         return {
             'name': folder_name, 'status': 'OK', 'time_sec': round(elapsed, 2),
             'tsr': tsrvec, 'CP': CPvec, 'CT': CTvec, 'Tp': Tpvec, 'Rp': Rpvec, 'Zp': Zpvec
@@ -1247,41 +1094,20 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
         traceback.print_exc()
         print("-" * 60)
         
+        elapsed = time.perf_counter() - start_time
         return {
             'name': folder_name, 'status': f'ERROR: {e}',
-            'time_sec': round(time.time() - start_time, 2),
+            'time_sec': round(elapsed, 2),
             'traceback': traceback.format_exc(limit=2),
         }
 
+
 def simulate_3D_turbine(base_config, stall_angles):
     """
-    Executes a 3D multi-slice aerodynamic simulation for a Vertical-Axis Wind Turbine (VAWT).
-
-    This wrapper function slices the turbine vertically along its height ($H$) based on the
-    configuration parameters. It models atmospheric boundary layer wind shear profiles
-    (e.g., power law or constant) using a power-law vertical discretization ($\beta$),
-    runs 2D Actuator Cylinder cases for each height slice, aggregates the generated aerodynamic
-    power, and computes the global 3D power coefficient ($C_{p,3D}$).
-
-    If 3D simulation is disabled in the configuration (`solver.simulation3d.enabled: false`),
-    the function falls back to executing a standard single 2D simulation case.
-
-    Args:
-        base_config (dict): Base configuration dictionary containing turbine, environment,
-            and solver settings (including the 'simulation3d' section).
-        stall_angles (list of tuple): Precomputed positive and negative stall angles
-            `(aoaStallPos, aoaStallNeg)` per airfoil index required by the aerodynamic solver.
-
-    Returns:
-        None: The function directly exports the integrated 3D performance data 
-            (`results_3D.dat`), saved plot figures (`cp_curve_3D.png`), and the copied 
-            YAML configuration file (`config_used.yaml`) to the designated 3D results directory.
-
-    Raises:
-        ValueError: If an unknown `velocity_profile` string is provided in `base_config`
-            (supported options: 'power_law', 'constant').
+    Executa a simulação 3D multi-slice com contador de tempo de alta precisão.
     """
-    start_time_3d = time.time()
+    # 1. Inicio do timer global 3D
+    start_time_3d = time.perf_counter()
 
     total_CP = None
     power_total = None
@@ -1291,14 +1117,11 @@ def simulate_3D_turbine(base_config, stall_angles):
     config_no_output['output']['save_plot'] = False
     config_no_output['output']['save_config'] = False
 
-    # AJUSTE CONFIG: Nova raiz do bloco 3D dentro de 'solver'
     sim3d_cfg = base_config.get('solver', {}).get('simulation3d', {})
     sim3d_settings = sim3d_cfg.get('settings', {})
     
-    # Checa se simulação 3D está habilitada
     if not sim3d_cfg.get('enabled', False):
         print("Simulação 3D desabilitada. Rodando simulação 2D padrão...")
-        # Pega parâmetros padrão do YAML
         airfoil_index = 0
         turbine_index = 0
         chord = base_config['turbine']['chord'][0]
@@ -1311,7 +1134,6 @@ def simulate_3D_turbine(base_config, stall_angles):
         )
         return
 
-    # AJUSTE CONFIG: Extração de parâmetros usando a nova subchave 'settings' e 'vertical_layers'
     height = float(base_config.get('turbine', {}).get('height', 20.0))
     n_slices = sim3d_settings.get('vertical_layers', 20)
     velocity_profile = sim3d_settings.get('velocity_profile', 'constant')
@@ -1321,38 +1143,37 @@ def simulate_3D_turbine(base_config, stall_angles):
     chord = base_config['turbine']['chord'][0]
     solidity = base_config['turbine']['solidity'][0]
     velocity_profile = sim3d_settings.get('velocity_profile', 'power_law')
-    # dz = height / n_slices
     
     folder_name_3D = f"3D_H{height}_Ns{n_slices}"
     result_dir_3D = os.path.join('src/results/results_3D', folder_name_3D)
     os.makedirs(result_dir_3D, exist_ok=True)
     
     tsrvec_global = None
-   
     rho = base_config['environment']['rho']
     r = base_config['turbine']['r']
 
     Vr = base_config['environment']['Vinf'][0]
     Zr = height / 2
+    alpha = 0.13 
     
-    alpha = 0.13 # [0.11, 0.15] 
-    
-    beta = sim3d_settings.get('discretization_power', 2.0) #b = 1: linear discretization; b = 2: power_law discretization
+    beta = sim3d_settings.get('discretization_power', 2.0)
     print(f'Beta: {beta}')
     eta = np.linspace(0, 1, n_slices + 1)
     z_nodes = height * (1 - (1 - eta)**beta)
     z_centers = 0.5 * (z_nodes[:-1] + z_nodes[1:])
     dz_array = z_nodes[1:] - z_nodes[:-1]
 
+    # 2. Marcação inicial antes de entrar no loop de fatias
+    start_slices_loop = time.perf_counter()
+
     for i in range(n_slices):
-        slice_start = time.time()
+        slice_start = time.perf_counter()
         
         z = z_centers[i]
         dz = dz_array[i]
 
-        # z = dz / 2 + i * dz # Distribuição igual de slices ao longo da altura da turbina
         if velocity_profile == 'power_law':
-            vinf = Vr * (z / Zr) ** alpha # velocity profile
+            vinf = Vr * (z / Zr) ** alpha 
         elif velocity_profile == 'constant':
             vinf = Vr 
             print("PERFIL DE VELOCIDADE CONSTANTE!")
@@ -1361,7 +1182,7 @@ def simulate_3D_turbine(base_config, stall_angles):
 
         z_centered = z - height / 2
 
-        print(f"Simulating slice {i+1}/{n_slices} at z={z:.2f} m")
+        print(f"\nSimulating slice {i+1}/{n_slices} at z={z:.2f} m")
 
         result = run_simulation_case(
             params=(airfoil_index, turbine_index, chord, solidity, vinf),
@@ -1370,23 +1191,24 @@ def simulate_3D_turbine(base_config, stall_angles):
             z=z_centered,
             H=height
         )
-        
-        print(i, result.get("status"))
-        print("CP:", result.get("CP"))
 
-        slice_time = time.time() - slice_start
-        avg_time = (time.time() - start_time_3d) / (i + 1)
-        remaining = avg_time * (n_slices - (i + 1))
-        print(f"Time slice {i+1}: {format_time(slice_time)} | ETA: {format_time(remaining)}")
+        slice_time = time.perf_counter() - slice_start
+        
+        # 3. Cálculo de ETA estabilizado usando a média das fatias já executadas
+        elapsed_slices = time.perf_counter() - start_slices_loop
+        avg_time_per_slice = elapsed_slices / (i + 1)
+        remaining_slices = n_slices - (i + 1)
+        eta_seconds = avg_time_per_slice * remaining_slices
+
+        print(f"Slice {i+1} status: {result.get('status')}")
+        print(f"⏱️ Tempo slice {i+1}: {format_time(slice_time)} | ETA total restante: {format_time(eta_seconds)}")
 
         if result['status'] != 'OK':
             print(f"Error at slice {i}: {result['status']}")
             continue
 
         CP = np.array(result['CP']) 
-
         A_slice = 2 * r * dz
-
         power_slice = CP * (0.5 * rho * vinf**3 * A_slice)
 
         if power_total is None:
@@ -1395,27 +1217,22 @@ def simulate_3D_turbine(base_config, stall_angles):
         else:
             power_total += power_slice
 
-        '''if total_CP is None:
-            total_CP = CP.copy()
-            tsrvec_global = np.array(result['tsr'])
-        else:
-            total_CP += CP '''
+    # 4. Apresentação do Tempo Total Integrado
+    total_time_3d = time.perf_counter() - start_time_3d
+    print("\n" + "="*50)
+    print(f"🎉 SIMULAÇÃO 3D CONCLUÍDA EM: {format_time(total_time_3d)} ({total_time_3d:.2f}s)")
+    print("="*50)
 
-    print(f'Time slice {i+1}: {format_time(slice_time)}')
-    # Power and Cp 3d
-    # Cp_3D = total_CP / n_slices 
     A_total = 2 * r * height
     P_available = 0.5 * rho * Vr**3 * A_total
 
-    Cp_3D = power_total / P_available
-
-    print("[DEBUG] Shape TSR:", tsrvec_global.shape)
+    Cp_3D = power_total / P_available if power_total is not None else None
 
     return {
         'tsr': tsrvec_global,
         'cp_3d': Cp_3D,
         'result_dir': result_dir_3D,
-        'elapsed_time': time.time() - start_time_3d
+        'elapsed_time': round(total_time_3d, 2)
     }
 
 # ======== Auxiliary Methods =========

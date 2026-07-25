@@ -1,124 +1,98 @@
-from numba import jit
 import numpy as np
 import matplotlib.pyplot as plt
 from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil, load_config
 #from src.pyvawt.simulation import Turbine, Environment
+import numba as nb
 
-@jit
+# ==============================================================================
+# FUNÇÕES AUXILIARES ESCALARES (COMPILADAS EM C VIA NUMBA)
+# ==============================================================================
+
+@nb.njit(fastmath=True)
 def abs_smooth(x, eps=1e-4):
-    return np.sqrt(x*x + eps*eps)
-@jit
-def ksmin(values, k=300.0):
-    values = np.array(values)
-    return -np.log(np.sum(np.exp(-k * values))) / k
-@jit
-def ksmax(values, k=300.0):
-    values = np.array(values)
-    return np.log(np.sum(np.exp(k * values))) / k
+    '''
+    Aproximação suave do valor absoluto para evitar descontinuidades de derivada.
+    '''
+    return np.sqrt(x * x + eps * eps)
 
-def af(alpha, Re, Mach, turbine, env, turbine_index, airfoil_index, family_factor=None):
 
-    rho = env.rho
-    mu = env.mu
-    chord = turbine.chord
+@nb.njit(fastmath=True)
+def ksmin2(a, b, k=300.0):
+    '''
+    Mínimo suave (KS) para 2 escalares sem alocação de memória e estável numericamente.
+    '''
+    m = a if a < b else b
+    return m - np.log(np.exp(-k * (a - m)) + np.exp(-k * (b - m))) / k
 
-    W = Re * mu / (rho * chord)
-    CL, CD = get_cl_cd_neuralfoil(alpha, W, turbine_index, airfoil_index)
 
-    CM = 0.0
-    return CL, CD, CM
+@nb.njit(fastmath=True)
+def ksmax2(a, b, k=300.0):
+    '''
+    Máximo suave (KS) para 2 escalares sem alocação de memória e estável numericamente.
+    '''
+    m = a if a > b else b
+    return m + np.log(np.exp(k * (a - m)) + np.exp(k * (b - m))) / k
 
-def Boeing_Vertol(
-    CL,
-    CD,
-    CM,
-    alpha,
-    adotnorm,
-    umach,
-    Re,
-    aoaStallPos,
-    aoaStallNeg,
-    AOA0,
-    tc, 
-    BV_DynamicFlagL,
-    BV_DynamicFlagD,
-    turbine,
-    env,
-    turbine_index,
-    airfoil_index,
-    family_factor=0.0,
+
+@nb.njit(fastmath=True)
+def interp2d_scalar(alpha_val, W_val, alpha_grid, W_grid, table):
+    '''
+    Interpolação bilinear escalar ultrarrápida para obter Cl/Cd da tabela estática.
+    '''
+    n_alpha = len(alpha_grid)
+    n_w = len(W_grid)
+    
+    d_alpha = alpha_grid[1] - alpha_grid[0]
+    d_w = W_grid[1] - W_grid[0]
+    
+    alpha_min, alpha_max = alpha_grid[0], alpha_grid[-1]
+    w_min, w_max = W_grid[0], W_grid[-1]
+
+    # Mapeia alpha para [-pi, pi]
+    a = (alpha_val + np.pi) % (2.0 * np.pi) - np.pi
+    w = W_val
+
+    if a <= alpha_min:
+        ia = 0; u = 0.0
+    elif a >= alpha_max:
+        ia = n_alpha - 2; u = 1.0
+    else:
+        pos_a = (a - alpha_min) / d_alpha
+        ia = int(pos_a)
+        u = pos_a - ia
+
+    if w <= w_min:
+        iw = 0; v = 0.0
+    elif w >= w_max:
+        iw = n_w - 2; v = 1.0
+    else:
+        pos_w = (w - w_min) / d_w
+        iw = int(pos_w)
+        v = pos_w - iw
+
+    f00 = table[ia, iw]
+    f10 = table[ia + 1, iw]
+    f01 = table[ia, iw + 1]
+    f11 = table[ia + 1, iw + 1]
+
+    return (1.0 - u) * (1.0 - v) * f00 + u * (1.0 - v) * f10 + (1.0 - u) * v * f01 + u * v * f11
+
+
+# ==============================================================================
+# KERNEL PRINCIPAL DO BOEING-VERTOL (100% NUMBA NOPYTHON)
+# ==============================================================================
+
+@nb.njit(fastmath=True)
+def boeing_vertol_jit(
+    CL, CD, CM,
+    alpha, adotnorm, umach, W,
+    aoaStallPos, aoaStallNeg, AOA0, tc,
+    BV_DynamicFlagL, BV_DynamicFlagD,
+    alpha_grid, W_grid, cl_table, cd_table
 ):
-    """
-    Applies the Boeing–Vertol dynamic stall correction model.
-
-    This function modifies the static aerodynamic coefficients using a
-    Boeing–Vertol dynamic stall formulation. The static airfoil polar is
-    assumed to be computed externally (e.g., via NeuralFoil) and provided
-    as input coefficients (CL, CD, CM). When dynamic stall conditions are
-    detected, corrected reference angles of attack are computed and the
-    aerodynamic coefficients are updated accordingly.
-
-    The model introduces a lag in the effective angle of attack based on
-    the normalized angle-of-attack rate and Mach number effects.
-
-    Parameters
-    ----------
-    CL : float
-        Static lift coefficient at the current angle of attack.
-    CD : float
-        Static drag coefficient at the current angle of attack.
-    CM : float
-        Static moment coefficient at the current angle of attack.
-    alpha : float
-        Instantaneous angle of attack (radians).
-    adotnorm : float
-        Normalized angle-of-attack rate.
-    umach : float
-        Local Mach number.
-    Re : float
-        Reynolds number.
-    aoaStallPos : float
-        Positive stall angle (radians).
-    aoaStallNeg : float
-        Negative stall angle (radians).
-    AOA0 : float
-        Zero-lift angle of attack (radians).
-    tc : float
-        Airfoil thickness-to-chord ratio.
-    BV_DynamicFlagL : int
-        Lift dynamic stall flag (0 = off, 1 = active).
-    BV_DynamicFlagD : int
-        Drag dynamic stall flag (0 = off, 1 = active).
-    turbine_index : int
-        Turbine identifier used by the airfoil evaluation function.
-    airfoil_index : int
-        Airfoil identifier used by the airfoil evaluation function.
-    family_factor : float, optional
-        Airfoil family interpolation parameter, by default 0.0.
-
-    Returns
-    -------
-    CL : float
-        Lift coefficient after dynamic stall correction.
-    CD : float
-        Drag coefficient after dynamic stall correction.
-    CM : float
-        Moment coefficient after dynamic stall correction.
-    BV_DynamicFlagL : int
-        Updated lift dynamic stall flag.
-    BV_DynamicFlagD : int
-        Updated drag dynamic stall flag.
-
-    Notes
-    -----
-    The static polar is expected to be computed outside this function.
-    Calls to the airfoil evaluation function `af()` occur only when the
-    dynamic stall model is active.
-
-    The implementation follows a Boeing–Vertol-style dynamic stall model
-    with Mach-dependent lag and stall-transition smoothing.
-    """
-    # Parameters
+    '''
+    Núcleo dinâmico de Boeing-Vertol compilado sem nenhuma dependência de objetos Python.
+    '''
     k1pos = 0.5
     k1neg = 0.5
     diff = 0.06 - tc
@@ -131,79 +105,104 @@ def Boeing_Vertol(
     gammaxm = 1.0 - 2.5 * diff
     dgammam = gammaxm / (hmachm - smachm)
 
-    # Reference alpha limits
+    # Limites de referência para alpha
     Fac = 0.9
-    dalphaRefMax = Fac * ksmin([abs_smooth(aoaStallPos - AOA0), abs_smooth(aoaStallNeg - AOA0)]) / ksmax([k1pos, k1neg])
-
+    val_pos = abs_smooth(aoaStallPos - AOA0)
+    val_neg = abs_smooth(aoaStallNeg - AOA0)
+    
+    dalphaRefMax = Fac * ksmin2(val_pos, val_neg) / ksmax2(k1pos, k1neg)
     TransA = 0.5 * dalphaRefMax
-    sign_adot = np.sign(adotnorm)
+    sign_adot = 1.0 if adotnorm >= 0.0 else -1.0
 
-    # Lift model
+    # --- Modelo de Sustentação (Lift) ---
     gammal = gammaxl - (umach - smachl) * dgammal
     dalphaLRef = gammal * np.sqrt(abs_smooth(adotnorm))
-    dalphaLRef = ksmin([dalphaLRef, dalphaRefMax])
+    dalphaLRef = ksmin2(dalphaLRef, dalphaRefMax)
 
     if adotnorm * (alpha - AOA0) < 0.0:
-        # CL magnitude decreasing
         dalphaL = k1neg * dalphaLRef
         alrefL = alpha - dalphaL * sign_adot
-
         if BV_DynamicFlagL == 1 and (aoaStallNeg < alrefL < aoaStallPos):
             BV_DynamicFlagL = 0
     else:
-        # CL magnitude increasing
         dalphaL = k1pos * dalphaLRef
         alrefL = alpha - dalphaL * sign_adot
-
         if alpha <= aoaStallNeg or alpha >= aoaStallPos:
             BV_DynamicFlagL = 1
         else:
             BV_DynamicFlagL = 0
 
-    # Drag model
+    # --- Modelo de Arraste (Drag) ---
     gammam = gammaxm - (umach - smachm) * dgammam
     if umach < smachm:
         gammam = gammaxm
 
     dalphaDRef = gammam * np.sqrt(abs_smooth(adotnorm))
-    dalphaDRef = ksmin([dalphaDRef, dalphaRefMax])
-    
+    dalphaDRef = ksmin2(dalphaDRef, dalphaRefMax)
+
     if adotnorm * (alpha - AOA0) < 0.0:
         dalphaD = k1neg * dalphaDRef
         alLagD = alpha - dalphaD * sign_adot
-
         if BV_DynamicFlagD == 1:
             delN = aoaStallNeg - alLagD
             delP = alLagD - aoaStallPos
         else:
-            delN = delP = 0.0
+            delN = 0.0
+            delP = 0.0
     else:
         dalphaD = k1pos * dalphaDRef
         alLagD = alpha - dalphaD * sign_adot
-
         delN = aoaStallNeg - alpha
         delP = alpha - aoaStallPos
 
     if delN > TransA or delP > TransA:
         alrefD = alLagD
         BV_DynamicFlagD = 1
-    elif 0 < delN < TransA:
+    elif 0.0 < delN < TransA:
         alrefD = alpha + (alLagD - alpha) * delN / TransA
         BV_DynamicFlagD = 1
-    elif 0 < delP < TransA:
+    elif 0.0 < delP < TransA:
         alrefD = alpha + (alLagD - alpha) * delP / TransA
         BV_DynamicFlagD = 1
     else:
+        alrefD = alpha
         BV_DynamicFlagD = 0
 
-    # Dynamic stall corrections
+    # --- Correções de Stall Dinâmico ---
     if BV_DynamicFlagL == 1:
-        CL_ref, _, CM = af(alrefL, Re, umach, turbine, env, turbine_index, airfoil_index, family_factor)
-        CL = CL_ref / (alrefL - AOA0) * (alpha - AOA0)
+        CL_ref = interp2d_scalar(alrefL, W, alpha_grid, W_grid, cl_table)
+        denom = (alrefL - AOA0)
+        if abs(denom) < 1e-6:
+            denom = 1e-6 if denom >= 0 else -1e-6
+        CL = CL_ref / denom * (alpha - AOA0)
 
     if BV_DynamicFlagD == 1:
-        _, CD, _ = af(alrefD, Re, umach, turbine, env, turbine_index, airfoil_index, family_factor)
+        CD = interp2d_scalar(alrefD, W, alpha_grid, W_grid, cd_table)
 
-    return CL, CD, CM, BV_DynamicFlagL, BV_DynamicFlagD
+    return CL, CD, CM, int(BV_DynamicFlagL), int(BV_DynamicFlagD)
 
 
+# ==============================================================================
+# WRAPPER PYTHON (COMPATIBILIDADE COM O RESTANTE DO CÓDIGO)
+# ==============================================================================
+
+def Boeing_Vertol(
+    CL, CD, CM, alpha, adotnorm, umach, Re,
+    aoaStallPos, aoaStallNeg, AOA0, tc,
+    BV_DynamicFlagL, BV_DynamicFlagD,
+    turbine, env, turbine_index, airfoil_index, family_factor=0.0
+):
+    '''
+    Wrapper de compatibilidade. Extrai as tabelas pré-calculadas e dispara 
+    o kernel compilado sem overhead.
+    '''
+    aero = turbine.aero
+    W = Re * env.mu / (env.rho * turbine.chord)
+
+    return boeing_vertol_jit(
+        float(CL), float(CD), float(CM),
+        float(alpha), float(adotnorm), float(umach), float(W),
+        float(aoaStallPos), float(aoaStallNeg), float(AOA0), float(tc),
+        int(BV_DynamicFlagL), int(BV_DynamicFlagD),
+        aero.alpha_grid, aero.W_grid, aero.cl_table, aero.cd_table
+    )

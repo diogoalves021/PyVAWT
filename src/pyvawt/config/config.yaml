@@ -28,7 +28,7 @@ environment:
 
 solver:
   tsr:
-    min: 4.0                     # Minimum Tip Speed Ratio (TSR)
+    min: 1.0                     # Minimum Tip Speed Ratio (TSR)
     max: 7.0                     # Maximum Tip Speed Ratio (TSR)
     n_points: 10                 # Number of TSR evaluation points
 
