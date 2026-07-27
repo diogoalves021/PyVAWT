@@ -47,7 +47,7 @@ solver:
     enabled: true                # Enable 3D effects/domain simulation
 
     settings:                    # [Active only if enabled = true]
-      vertical_layers: 3         # Number of vertical grid divisions for cylinder discretization
+      vertical_layers: 5         # Number of vertical grid divisions for cylinder discretization
       discretization_power: 2    # Vertical grid spacing law: 1 = linear, 2 = power law (nodes concentrated at top)
       velocity_profile: power_law # Atmospheric wind profile model: 'constant' or 'power_law'
 
@@ -73,7 +73,7 @@ output:
     dpi: 300                     # Image resolution (Dots Per Inch)
 
   cp_theta:
-    enabled: true                # Enable/disable Cp(theta) extraction (2D mode only)
+    enabled: false                # Enable/disable Cp(theta) extraction (2D mode only)
     target_tsr: 2.58             # Target TSR for azimuthal distribution extraction
     tolerance: 0.7               # Search tolerance to locate target TSR
     save_data: true              # Save the cp_theta_distribution.dat raw data file

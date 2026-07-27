@@ -12,6 +12,9 @@ from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil
 import csv
 from pathlib import Path
 import matplotlib.pyplot as plt
+import sys
+import time
+from datetime import timedelta
 
 def load_config(path):
     '''
@@ -141,7 +144,6 @@ def detect_stall_angles(config, airfoil_index):
     if not np.isclose(aoaStallPos, -aoaStallNeg, rtol=1e-9):
         raise ValueError("Stall angles error: stall angles are not symmetric.")
 
-    print(f'{airfoil_name.upper()} stall angle: ± {aoaStallPos_deg:.1f}°')
     return aoaStallPos, aoaStallNeg
 
 def print_config(config):
@@ -331,21 +333,51 @@ def print_simulation_results(results, start_time, log_path):
     print(f"Log file       : {log_path}")
     print("=" * 40)
 
-def setup_output_dir(base_path: str, run_name: str) -> Path:
-    """Cria e retorna o diretório de saída com suporte a caminhos dinâmicos."""
+def setup_output_dir(base_path: str | Path, run_name: str) -> Path:
+    """
+    Create and return the output directory path.
+
+    Parameters
+    ----------
+    base_path : str or Path
+        Base directory path where execution folders are stored.
+    run_name : str
+        Name of the specific run folder to create.
+
+    Returns
+    -------
+    Path
+        Path object pointing to the created directory.
+    """
     out_dir = Path(base_path) / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
 
 
-def export_2d_results(results: list, config: dict, output_dir: str = "results/2D"):
-    """Salva os resultados da varredura/batch 2D."""
+def export_2d_results(results: list[dict], config: dict, output_dir: str = "results/2D") -> Path | None:
+    """
+    Export 2D sweep simulation results to a CSV log and copy the configuration.
+
+    Parameters
+    ----------
+    results : list of dict
+        List of dictionaries containing output metrics for each simulation case.
+    config : dict
+        Full simulation configuration dictionary.
+    output_dir : str, default="results/2D"
+        Base directory where 2D execution results will be stored.
+
+    Returns
+    -------
+    Path or None
+        Path to the generated CSV log file, or None if `results` is empty.
+    """
     if not results:
-        return
+        return None
 
     out_path = setup_output_dir(output_dir, "batch_execution")
 
-    # 1. Salva log CSV
+    # 1. Save CSV log
     csv_file = out_path / "log_simulacoes.csv"
     fieldnames = list(results[0].keys())
     with open(csv_file, "w", newline="", encoding="utf-8") as f:
@@ -353,20 +385,38 @@ def export_2d_results(results: list, config: dict, output_dir: str = "results/2D
         writer.writeheader()
         writer.writerows(results)
 
-    # 2. Salva cópia do config
+    # 2. Save configuration copy
     save_config(config, out_path / "config_used.yaml")
 
-    print(f"[IO] Resultados 2D salvos em: {out_path.resolve()}")
+    return csv_file
 
 
 def export_3d_results(
-    tsr: np.ndarray, cp_3d: np.ndarray, config: dict, output_dir: str
-):
-    """Salva dados, gráficos e o config da simulação 3D."""
+    tsr: np.ndarray, cp_3d: np.ndarray, config: dict, output_dir: str | Path
+) -> Path:
+    """
+    Export 3D simulation numerical data, Cp curve plot, and configuration copy.
+
+    Parameters
+    ----------
+    tsr : np.ndarray
+        Array of Tip Speed Ratio values [-].
+    cp_3d : np.ndarray
+        Array of integrated 3D Power Coefficients [-].
+    config : dict
+        Full simulation configuration dictionary.
+    output_dir : str or Path
+        Target directory path for exporting 3D artifacts.
+
+    Returns
+    -------
+    Path
+        Directory Path object where artifacts were saved.
+    """
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # 1. Salva arquivo .dat
+    # 1. Save .dat data file
     data_to_save = np.column_stack((tsr, cp_3d))
     np.savetxt(
         out_path / "results_3D.dat",
@@ -376,7 +426,7 @@ def export_3d_results(
         delimiter="\t",
     )
 
-    # 2. Salva gráfico
+    # 2. Save Cp curve plot
     plt.figure()
     plt.plot(tsr, cp_3d, "b-o", label="$C_p$ 3D")
     plt.xlabel("TSR")
@@ -386,62 +436,211 @@ def export_3d_results(
     plt.savefig(out_path / "cp_curve_3D.png", dpi=300)
     plt.close()
 
-    # 3. Copia config
-    save_config(config, str(out_path / "config_used.yaml"))
+    # 3. Save configuration copy
+    save_config(config, out_path / "config_used.yaml")
 
-    print(f"[IO] Resultados 3D salvos em: {out_path.resolve()}")
+    return out_path
 
-def resolve_turbine_geometry(turbine_params, verbose=True):
+
+def resolve_turbine_geometry(turbine_params: dict, verbose=True) -> tuple[float, float, float]:
     """
-    Sincroniza e garante a consistência física entre B, corda, solidez e raio (R).
-    Garante que os retornos sejam rigorosamente escalares do tipo float.
-    """
-    B = float(np.squeeze(turbine_params['B']))
-    chord = float(np.squeeze(turbine_params['chord']))
-    r_yaml = turbine_params.get('r')
+    Synchronize physical geometry parameters for rotor consistency.
 
-    # Case A: Solidity is provided (Sweep or explicit configuration)
-    if 'solidity' in turbine_params and turbine_params['solidity'] is not None:
-        solidity = float(np.squeeze(turbine_params['solidity']))
+    Calculates missing parameters (radius or solidity) from blade count,
+    chord length, and explicit target inputs. Ensures scalar float returns.
+
+    Parameters
+    ----------
+    turbine_params : dict
+        Dictionary containing turbine geometric properties:
+        - 'B' : int or float, number of blades.
+        - 'chord' : float, blade chord length [m].
+        - 'solidity' : float, optional, target rotor solidity [-].
+        - 'r' : float, optional, target rotor radius [m].
+
+    Returns
+    -------
+    r : float
+        Rotor radius [m].
+    chord : float
+        Sanitized blade chord length [m].
+    solidity : float
+        Rotor solidity [-].
+
+    Raises
+    ------
+    ValueError
+        If neither radius ('r') nor solidity ('solidity') is provided.
+    """
+    B = float(np.squeeze(turbine_params["B"]))
+    chord = float(np.squeeze(turbine_params["chord"]))
+    r_yaml = turbine_params.get("r")
+
+    # Case A: Solidity is provided (Sweep or explicit config)
+    if "solidity" in turbine_params and turbine_params["solidity"] is not None:
+        solidity = float(np.squeeze(turbine_params["solidity"]))
         r = float((B * chord) / solidity)
-        
-        if verbose:
-            if r_yaml is not None:
-                r_yaml_val = float(np.squeeze(r_yaml))
-                if abs(r_yaml_val - r) > 1e-3:
-                    print(
-                        f"--> [WARNING] Solidity ({solidity}) took priority: "
-                        f"YAML radius ({r_yaml_val:.2f} m) was overridden to {r:.2f} m.",
-                        flush=True
-                    )
-                else:
-                    print(
-                        f"--> [INFO] Geometry consistent: R = {r:.2f} m, σ = {solidity:.4f}",
-                        flush=True
-                    )
-            else:
-                print(
-                    f"--> [INFO] Radius calculated from solidity: R = {r:.2f} m (σ = {solidity:.4f})",
-                    flush=True
-                )
 
     # Case B: Only Radius is provided
     else:
         if r_yaml is None:
-            raise ValueError("Configuration Error: Provide at least Radius ('r') or Solidity ('solidity').")
-        
-        r = float(np.squeeze(r_yaml))
-        solidity = float((B * chord) / r)
-        
-        if verbose:
-            print(
-                f"--> [INFO] Solidity calculated from radius: σ = {solidity:.4f} (R = {r:.2f} m)",
-                flush=True
+            raise ValueError(
+                "Configuration Error: Provide at least Radius ('r') or Solidity ('solidity')."
             )
 
-    # Sanitize dictionary values as clean float scalars
-    turbine_params['r'] = r
-    turbine_params['chord'] = chord
-    turbine_params['solidity'] = solidity
+        r = float(np.squeeze(r_yaml))
+        solidity = float((B * chord) / r)
+
+    # Update dictionary with sanitized float scalars
+    turbine_params["r"] = r
+    turbine_params["chord"] = chord
+    turbine_params["solidity"] = solidity
 
     return r, chord, solidity
+
+# Terminal UI 
+
+import sys
+
+
+class UI:
+    """
+    Terminal User Interface helper providing ANSI styling, status indicators, and progress bars.
+
+    Attributes
+    ----------
+    RESET : str
+        ANSI code to reset text formatting.
+    BOLD : str
+        ANSI code for bold text style.
+    DIM : str
+        ANSI code for dimmed/faded text style.
+    CYAN : str
+        ANSI code for cyan color output.
+    GREEN : str
+        ANSI code for green color output.
+    YELLOW : str
+        ANSI code for yellow color output.
+    RED : str
+        ANSI code for red color output.
+    """
+
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    CYAN = "\033[96m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+
+    @staticmethod
+    def banner(title: str) -> None:
+        """
+        Display a centered main header banner enclosed in a styled box.
+
+        Parameters
+        ----------
+        title : str
+            Title string to center inside the box header.
+        """
+        line = "═" * 68
+        print(f"\n{UI.CYAN}{UI.BOLD}╔{line}╗")
+        print(f"║ {title.center(66)} ║")
+        print(f"╚{line}╝{UI.RESET}\n")
+
+    @staticmethod
+    def section(title: str) -> None:
+        """
+        Display an unnumbered section divider in the terminal.
+
+        Parameters
+        ----------
+        title : str
+            Section header title text.
+        """
+        print(f"\n{UI.BOLD}{UI.CYAN}─── {title} {"─" * (60 - len(title))}{UI.RESET}")
+
+    @staticmethod
+    def status(key: str, value: str, level: str = "info") -> None:
+        """
+        Display an aligned key-value status row with level-based color highlights.
+
+        Parameters
+        ----------
+        key : str
+            Label describing the metric, parameter, or status field.
+        value : str
+            Value or descriptive message to display.
+        level : {"info", "ok", "warn"}, default="info"
+            Category determining the value string color:
+            - "ok": Green
+            - "warn": Yellow
+            - "info" (or default): Standard color
+        """
+        color = UI.GREEN if level == "ok" else UI.YELLOW if level == "warn" else UI.RESET
+        print(f"  {UI.DIM}•{UI.RESET} {key:<28} : {color}{value}{UI.RESET}")
+
+    @staticmethod
+    def format_time(seconds: float) -> str:
+        """
+        Format execution time with sub-second precision.
+
+        Parameters
+        ----------
+        seconds : float
+            Time duration in seconds.
+
+        Returns
+        -------
+        str
+            Formatted time string (e.g., "0.89s" or "1m 12.45s").
+        """
+        if seconds <= 0:
+            return "0.00s"
+        if seconds < 60:
+            return f"{seconds:.2f}s"
+        minutes = int(seconds // 60)
+        rem_sec = seconds % 60
+        return f"{minutes}m {rem_sec:.2f}s"
+
+    @staticmethod
+    def progress_bar(
+        current: int, total: int, elapsed_sec: float, prefix: str = "Progress"
+    ) -> None:
+        """
+        Render an in-place single-line graphical progress bar with ETA and elapsed time.
+
+        Parameters
+        ----------
+        current : int
+            Number of completed iterations or slices.
+        total : int
+            Total target iterations or slices.
+        elapsed_sec : float
+            Elapsed execution time in seconds.
+        prefix : str, default="Progress"
+            Label displayed prior to the progress bar.
+        """
+        percent = (current / total) * 100 if total > 0 else 100.0
+        bar_len = 25
+        filled = int(bar_len * current // total) if total > 0 else bar_len
+        bar = "█" * filled + "░" * (bar_len - filled)
+
+        if 0 < current < total:
+            eta_sec = (elapsed_sec / current) * (total - current)
+            eta_str = UI.format_time(eta_sec)
+        else:
+            eta_str = "0.00s"
+
+        elapsed_str = UI.format_time(elapsed_sec)
+
+        msg = (
+            f"\r  {UI.CYAN}{prefix}{UI.RESET} [{UI.GREEN}{bar}{UI.RESET}] "
+            f"{UI.BOLD}{percent:5.1f}%{UI.RESET} ({current}/{total}) "
+            f"| {UI.DIM}Elapsed:{UI.RESET} {elapsed_str} "
+            f"| {UI.DIM}ETA:{UI.RESET} {eta_str}"
+        )
+        sys.stdout.write(msg)
+        sys.stdout.flush()
+        if current == total:
+            print()
