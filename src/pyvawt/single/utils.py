@@ -416,7 +416,7 @@ def export_3d_results(
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # 1. Save .dat data file
+    # Save .dat data file
     data_to_save = np.column_stack((tsr, cp_3d))
     np.savetxt(
         out_path / "results_3D.dat",
@@ -426,7 +426,7 @@ def export_3d_results(
         delimiter="\t",
     )
 
-    # 2. Save Cp curve plot
+    # Save Cp curve plot
     plt.figure()
     plt.plot(tsr, cp_3d, "b-o", label="$C_p$ 3D")
     plt.xlabel("TSR")
@@ -436,7 +436,7 @@ def export_3d_results(
     plt.savefig(out_path / "cp_curve_3D.png", dpi=300)
     plt.close()
 
-    # 3. Save configuration copy
+    # Save configuration copy
     save_config(config, out_path / "config_used.yaml")
 
     return out_path
@@ -499,9 +499,6 @@ def resolve_turbine_geometry(turbine_params: dict, verbose=True) -> tuple[float,
     return r, chord, solidity
 
 # Terminal UI 
-
-import sys
-
 
 class UI:
     """
