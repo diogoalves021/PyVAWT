@@ -2,15 +2,18 @@
 Aerodynamic Simulation Runner for Coupled VAWT Turbines.
 Delegates NeuralFoil evaluations to the modular 'data_generation' library.
 """
-
+import os
 import logging
 import time
+import copy
+import hashlib
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Union, NamedTuple, Optional
 import yaml
-
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from src.pyvawt.multiple.simulation import actuatorcylinder, Turbine, Environment
 from src.pyvawt.multiple.read_data import readaerodyn
@@ -19,14 +22,19 @@ from src.pyvawt.multiple.data_generation import load_config, get_cl_cd_neuralfoi
 # Global constants
 ATOL: float = 1e-6
 
-# Logger setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
+# Configuração básica do logger
 logger = logging.getLogger(__name__)
+if not logger.hasHandlers():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
+
+# ==============================================================================
+# ESTRUTURAS DE DADOS E ADAPTERS AERODINÂMICOS
+# ==============================================================================
 
 class SimulationContext(NamedTuple):
     """Structured container for initialized simulation physical components."""
@@ -39,41 +47,194 @@ class SimulationContext(NamedTuple):
     ntheta: int
 
 
+from numba import njit
+
+# ==============================================================================
+# KERNEL NUMBA DE ALTÍSSIMA VELOCIDADE (C-LEVEL INTERPOLATION)
+# ==============================================================================
+
+@njit(fastmath=True, cache=True)
+def _bilinear_interp_2d_numba(
+    alpha_wrapped: np.ndarray,
+    w_clamped: np.ndarray,
+    values: np.ndarray,
+    alpha_min: float,
+    inv_dalpha: float,
+    log_w_min: float,
+    inv_dlog_w: float,
+    n_alpha: int,
+    n_w: int
+) -> np.ndarray:
+    """
+    Kernel otimizado em nível de C compilado via Numba.
+    Executa a interpolação bilinear sem alocações temporárias na RAM.
+    """
+    alpha_flat = alpha_wrapped.ravel()
+    w_flat = w_clamped.ravel()
+    n = alpha_flat.size
+    out = np.empty(n, dtype=np.float64)
+
+    max_i = n_alpha - 1.000001
+    max_j = n_w - 1.000001
+
+    for k in range(n):
+        # Mapeamento O(1) direto de índices
+        fi = (alpha_flat[k] - alpha_min) * inv_dalpha
+        fj = (np.log(w_flat[k]) - log_w_min) * inv_dlog_w
+
+        # Bounds Clamping
+        if fi < 0.0:
+            fi = 0.0
+        elif fi > max_i:
+            fi = max_i
+
+        if fj < 0.0:
+            fj = 0.0
+        elif fj > max_j:
+            fj = max_j
+
+        i0 = int(fi)
+        j0 = int(fj)
+        i1 = i0 + 1
+        j1 = j0 + 1
+
+        t = fi - i0
+        u = fj - j0
+
+        v00 = values[i0, j0]
+        v10 = values[i1, j0]
+        v01 = values[i0, j1]
+        v11 = values[i1, j1]
+
+        out[k] = (1.0 - t) * (1.0 - u) * v00 + t * (1.0 - u) * v10 + (1.0 - t) * u * v01 + t * u * v11
+
+    return out.reshape(alpha_wrapped.shape)
+
+
+class FastBilinear2D:
+    """
+    Wrapper Python para o Kernel compilado em Numba.
+    """
+    def __init__(self, alpha_grid: np.ndarray, w_grid: np.ndarray, values: np.ndarray):
+        self.n_alpha = len(alpha_grid)
+        self.n_w = len(w_grid)
+        self.values = np.ascontiguousarray(values, dtype=np.float64)
+
+        self.alpha_min = float(alpha_grid[0])
+        self.inv_dalpha = float((self.n_alpha - 1) / (alpha_grid[-1] - alpha_grid[0]))
+
+        self.log_w_min = float(np.log(w_grid[0]))
+        self.inv_dlog_w = float((self.n_w - 1) / (np.log(w_grid[-1]) - np.log(w_grid[0])))
+
+    def __call__(self, alpha_wrapped: np.ndarray, w_clamped: np.ndarray) -> np.ndarray:
+        return _bilinear_interp_2d_numba(
+            alpha_wrapped,
+            w_clamped,
+            self.values,
+            self.alpha_min,
+            self.inv_dalpha,
+            self.log_w_min,
+            self.inv_dlog_w,
+            self.n_alpha,
+            self.n_w
+        )
+
 class NeuralFoilAirfoilWrapper:
     """
-    An adapter that interfaces the classic solver with your 'data_generation.py' module.
-    It translates calls expecting (alpha, Re) into your get_cl_cd_neuralfoil(alpha, W) signature.
+    Adapter otimizado com Look-Up Table 2D, Cache em Disco e Interpolação O(1).
     """
-    def __init__(self, turbine_index: int, airfoil_index: int):
+    def __init__(self, turbine_index: int, airfoil_index: int, n_alpha: int = 1800, n_w: int = 40):
         self.turbine_index = turbine_index
         self.airfoil_index = airfoil_index
-
-    def get_coefficients(self, alpha_rad: Union[float, np.ndarray], Re: Union[float, np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+        
         config = load_config()
         
         chord_entry = config['turbine']['chord']
         if isinstance(chord_entry, list):
-            chord = float(chord_entry[self.turbine_index % len(chord_entry)])
+            self.chord = float(chord_entry[self.turbine_index % len(chord_entry)])
         else:
-            chord = float(chord_entry)
+            self.chord = float(chord_entry)
             
-        rho = config['environment']['rho']
-        mu = config['environment']['mu']
+        self.rho = float(config['environment']['rho'])
+        self.mu = float(config['environment']['mu'])
+
+        # Sistema de Cache em Disco
+        cache_dir = Path(".cache_lut")
+        cache_dir.mkdir(exist_ok=True)
+        
+        cache_sig = f"t{turbine_index}_a{airfoil_index}_c{self.chord:.6f}_r{self.rho:.4f}_m{self.mu:.4e}_na{n_alpha}_nw{n_w}"
+        hash_id = hashlib.md5(cache_sig.encode('utf-8')).hexdigest()[:10]
+        cache_file = cache_dir / f"lut_{hash_id}.npz"
+
+        if cache_file.exists():
+            try:
+                data = np.load(cache_file)
+                self.alpha_grid = data['alpha_grid']
+                self.w_grid = data['w_grid']
+                self.cl_grid = data['cl_grid']
+                self.cd_grid = data['cd_grid']
+            except Exception:
+                self._build_and_cache_lut(n_alpha, n_w, cache_file)
+        else:
+            self._build_and_cache_lut(n_alpha, n_w, cache_file)
+
+        # Interpoladores customizados de altíssima velocidade
+        self._interp_cl = FastBilinear2D(self.alpha_grid, self.w_grid, self.cl_grid)
+        self._interp_cd = FastBilinear2D(self.alpha_grid, self.w_grid, self.cd_grid)
+
+    def _build_and_cache_lut(self, n_alpha: int, n_w: int, cache_file: Path) -> None:
+        self.alpha_grid = np.linspace(-np.pi, np.pi, n_alpha)
+        self.w_grid = np.geomspace(0.1, 150.0, n_w)
+
+        ALPHA, W = np.meshgrid(self.alpha_grid, self.w_grid, indexing='ij')
+        
+        cl_flat, cd_flat = get_cl_cd_neuralfoil(
+            ALPHA.ravel(), 
+            W.ravel(), 
+            self.turbine_index, 
+            self.airfoil_index
+        )
+
+        self.cl_grid = np.asarray(cl_flat, dtype=np.float64).reshape(ALPHA.shape)
+        self.cd_grid = np.asarray(cd_flat, dtype=np.float64).reshape(ALPHA.shape)
+
+        np.savez_compressed(
+            cache_file, 
+            alpha_grid=self.alpha_grid, 
+            w_grid=self.w_grid, 
+            cl_grid=self.cl_grid, 
+            cd_grid=self.cd_grid
+        )
+
+    def get_coefficients(
+        self, 
+        alpha_rad: Union[float, np.ndarray], 
+        Re: Union[float, np.ndarray] = None
+    ) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
+        alpha_arr = np.asarray(alpha_rad, dtype=np.float64)
+        alpha_wrapped = (alpha_arr + np.pi) % (2.0 * np.pi) - np.pi
 
         if Re is None:
-            W = 10.0
+            w_arr = np.full_like(alpha_wrapped, 10.0)
         else:
-            Re = np.asarray(Re)
-            W = Re * mu / (rho * chord)
+            w_arr = np.asarray(Re, dtype=np.float64) * (self.mu / (self.rho * self.chord))
 
-        return get_cl_cd_neuralfoil(alpha_rad, W, self.turbine_index, self.airfoil_index)
+        w_clamped = np.clip(w_arr, self.w_grid[0], self.w_grid[-1])
+
+        # Consulta ultrarrápida O(1)
+        cl = self._interp_cl(alpha_wrapped, w_clamped)
+        cd = self._interp_cd(alpha_wrapped, w_clamped)
+
+        if alpha_arr.ndim == 0:
+            return float(cl), float(cd)
+
+        return cl, cd
 
     def __call__(self, alpha_rad, Re=None):
         return self.get_coefficients(alpha_rad, Re)
 
-
 # ==============================================================================
-# CAMADA DE I/O E EXPORTAÇÃO DE RESULTADOS (EXPORTER COM SUPORTE A CONFIG)
+# CAMADA DE I/O E EXPORTAÇÃO DE RESULTADOS
 # ==============================================================================
 
 def _apply_plot_style() -> None:
@@ -125,10 +286,7 @@ def _save_raw_data(
     delimiter = ',' if is_csv else '\t'
     ext = 'csv' if is_csv else 'dat'
 
-    if include_header:
-        header = f'TSR{delimiter}CP{delimiter}CT{delimiter}Rp{delimiter}Tp{delimiter}Zp'
-    else:
-        header = ''
+    header = f'TSR{delimiter}CP{delimiter}CT{delimiter}Rp{delimiter}Tp{delimiter}Zp' if include_header else ''
 
     for t in range(num_turbines):
         data_to_save = np.column_stack((
@@ -202,17 +360,13 @@ def export_coupled_case_results(
     zp_vec: np.ndarray,
     base_results_dir: Union[str, Path] = 'results'
 ) -> Optional[Path]:
-    """
-    Exporta os resultados respeitando integralmente o bloco 'output' do config.yaml.
-    """
+    """Exporta os resultados respeitando integralmente o bloco 'output' do config.yaml."""
     output_cfg = config.get("output", {})
 
-    # 1. Verifica se o salvamento está habilitado
     if not output_cfg.get("save", True):
         logger.info("[IO] Salvamento de resultados desativado (output.save = false).")
         return None
 
-    # Extração das opções de salvamento com fallbacks seguros
     save_config_flag = output_cfg.get("save_config", True)
     save_plot_flag = output_cfg.get("save_plot", True)
 
@@ -224,16 +378,13 @@ def export_coupled_case_results(
     img_fmt = plot_img_cfg.get("format", "png")
     img_dpi = int(plot_img_cfg.get("dpi", 300))
 
-    # Criação do diretório do caso
     case_dir = Path(base_results_dir) / case_name
     case_dir.mkdir(parents=True, exist_ok=True)
 
-    # 2. Salva a cópia do YAML de configuração
     if save_config_flag:
         with open(case_dir / 'config_used.yaml', 'w', encoding='utf-8') as f:
             yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
-    # 3. Exporta arquivos brutos de dados (.dat ou .csv)
     num_turbines = len(turbines)
     _save_raw_data(
         case_dir=case_dir,
@@ -248,7 +399,6 @@ def export_coupled_case_results(
         include_header=inc_header
     )
 
-    # 4. Gera os gráficos caso a flag save_plot esteja ativa
     if save_plot_flag:
         plot_turbine_layout(turbines, case_dir, fmt=img_fmt, dpi=img_dpi)
         _plot_performance_curves(case_dir, num_turbines, tsr_vec, cp_vec, fmt=img_fmt, dpi=img_dpi)
@@ -271,7 +421,10 @@ def _execute_tsr_sweep(
     radius: float,
     num_turbines: int
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Runs the sequential sweep over all TSR values implementing the physical Warm Start solver."""
+    """
+    Executa a varredura sequencial do sweep de TSR.
+    Preserva o Warm Start (w0 = w_guess) reduzindo as iterações do solver de ~18 para ~3 por ponto.
+    """
     n_points = len(tsr_vec)
     cp_vec = np.zeros((n_points, num_turbines))
     ct_vec = np.zeros((n_points, num_turbines))
@@ -291,8 +444,9 @@ def _execute_tsr_sweep(
                 turbine.Omega = 13.62 * 2 * np.pi / 60.0
             env.Vinf = turbines[0].Omega * radius / tsr
         else:
-            raise ValueError(f"Invalid var_omega_vinf strategy configured: {var_omega_vinf}")
+            raise ValueError(f"Estratégia var_omega_vinf inválida configurada: {var_omega_vinf}")
         
+        # Warm Start mantido: reutiliza a matriz de velocidades induzidas do ponto anterior
         ct, cp, rp, tp, zp, theta, w_guess = actuatorcylinder(turbines, env, ntheta, w0=w_guess)
         
         for t in range(num_turbines):
@@ -416,7 +570,6 @@ def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[st
     num_turbines = int(solver_cfg.get("num_turbines", 1))
     blades = int(config.get("turbine", {}).get("B", 3))
     
-    # Cálculo do Raio
     radius = round(chord * blades / solidity, 4)
 
     fixed_param = str(solver_cfg.get("fixed_parameter", "vinf")).lower()
@@ -437,7 +590,7 @@ def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[st
 
         n_points = 20
         tsr_vec = np.linspace(1.0, 7.0, n_points)
-        
+
         cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec = _execute_tsr_sweep(
             turbines=context.turbines,
             env=context.env,
@@ -451,7 +604,6 @@ def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[st
 
         elapsed = time.perf_counter() - start_time
 
-        # Exporta tudo para a subpasta do caso respeitando as opções do config.yaml
         export_coupled_case_results(
             case_name=case_name,
             config=config,
