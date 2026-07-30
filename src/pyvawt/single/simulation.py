@@ -20,7 +20,8 @@ from src.pyvawt.submodels.boeing_vertol import boeing_vertol_jit, interp2d_scala
 from src.pyvawt.single.data_reading import readaerodyn
 from src.pyvawt.single.utils import save_config, format_time
 from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil
-from src.pyvawt.single.utils import load_config, get_tc_from_airfoil, detect_stall_angles, save_config, resolve_turbine_geometry, UI
+from src.pyvawt.single.utils import load_config, get_tc_from_airfoil, detect_stall_angles, save_config, resolve_turbine_geometry
+from src.pyvawt.ui.ui import UI
 
 # Global RAM cache dictionary for storing precomputed HDF5 influence matrices
 _MATRIX_H5_CACHE: dict[tuple[int, str], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}

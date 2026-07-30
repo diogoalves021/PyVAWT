@@ -6,6 +6,7 @@ from numba import njit
 from scipy.optimize import root
 from typing import Callable, Tuple
 
+from src.pyvawt.ui.ui import UI
 # ==============================================================================
 # Cache em Memória RAM para Matrizes pré-calculadas
 # ==============================================================================

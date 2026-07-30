@@ -15,9 +15,11 @@ from src.pyvawt.single.utils import (
     print_simulation_results,
     format_time,
     export_3d_results,
-    export_2d_results,
-    UI
+    export_2d_results
 )
+
+from src.pyvawt.ui.ui import UI
+
 #run command: uv run python3 -m src.pyvawt.single.main
 # test/data/config.yaml src/pyvawt/config/config.yaml
 

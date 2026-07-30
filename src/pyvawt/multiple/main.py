@@ -14,10 +14,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from numba import njit
 
 from src.pyvawt.multiple.simulation import actuatorcylinder, Turbine, Environment
 from src.pyvawt.multiple.read_data import readaerodyn
 from src.pyvawt.multiple.data_generation import load_config, get_cl_cd_neuralfoil
+from src.pyvawt.ui.ui import MultiTurbineUI  # <--- IMPORT DA SUA UI
 
 # Global constants
 ATOL: float = 1e-6
@@ -45,9 +47,6 @@ class SimulationContext(NamedTuple):
     environment_params: Dict[str, Any]
     radius: float
     ntheta: int
-
-
-from numba import njit
 
 # ==============================================================================
 # KERNEL NUMBA DE ALTÍSSIMA VELOCIDADE (C-LEVEL INTERPOLATION)
@@ -403,7 +402,6 @@ def export_coupled_case_results(
         plot_turbine_layout(turbines, case_dir, fmt=img_fmt, dpi=img_dpi)
         _plot_performance_curves(case_dir, num_turbines, tsr_vec, cp_vec, fmt=img_fmt, dpi=img_dpi)
 
-    logger.info(f"[IO] Resultados salvos com sucesso na pasta: {case_dir.resolve()}")
     return case_dir
 
 
@@ -420,10 +418,9 @@ def _execute_tsr_sweep(
     vinf: float,
     radius: float,
     num_turbines: int
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
     """
-    Executa a varredura sequencial do sweep de TSR.
-    Preserva o Warm Start (w0 = w_guess) reduzindo as iterações do solver de ~18 para ~3 por ponto.
+    Executa a varredura sequencial do sweep de TSR com atualização da barra de progresso na UI.
     """
     n_points = len(tsr_vec)
     cp_vec = np.zeros((n_points, num_turbines))
@@ -434,6 +431,8 @@ def _execute_tsr_sweep(
     theta_vec = np.zeros((n_points, ntheta))
 
     w_guess = None
+    warnings = []
+    sweep_start_time = time.perf_counter()
 
     for i, tsr in enumerate(tsr_vec):
         if var_omega_vinf == 0:
@@ -446,8 +445,16 @@ def _execute_tsr_sweep(
         else:
             raise ValueError(f"Estratégia var_omega_vinf inválida configurada: {var_omega_vinf}")
         
-        # Warm Start mantido: reutiliza a matriz de velocidades induzidas do ponto anterior
-        ct, cp, rp, tp, zp, theta, w_guess = actuatorcylinder(turbines, env, ntheta, w0=w_guess)
+        # Executa o solver
+        res = actuatorcylinder(turbines, env, ntheta, w0=w_guess)
+        
+        # Suporte para captura de avisos caso actuatorcylinder os retorne
+        if len(res) == 8:
+            ct, cp, rp, tp, zp, theta, w_guess, solver_warns = res
+            if solver_warns:
+                warnings.extend(solver_warns)
+        else:
+            ct, cp, rp, tp, zp, theta, w_guess = res
         
         for t in range(num_turbines):
             cp_vec[i, t] = cp[t]
@@ -464,7 +471,11 @@ def _execute_tsr_sweep(
                 
         theta_vec[i, :] = theta
 
-    return cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec
+        # ─── CONEXÃO COM A UI: Atualiza a barra de progresso no console ───
+        elapsed = time.perf_counter() - sweep_start_time
+        MultiTurbineUI.print_progress(i + 1, n_points, elapsed)
+
+    return cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec, warnings
 
 
 def initialize_turbine_and_environment(config: Dict[str, Any]) -> SimulationContext:
@@ -582,16 +593,22 @@ def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[st
 
     case_name = f'{airfoil_name}_turb{num_turbines}_b{blades}_r{radius}_ch{chord}_sol{solidity}_vinf{vinf}'.replace('.', 'p')
 
+    # Mede o tempo de setup / JIT Numba
+    t_start_setup = time.perf_counter()
     context = initialize_turbine_and_environment(config)
+    jit_setup_time = time.perf_counter() - t_start_setup
+
+    # ─── CONEXÃO COM A UI: Imprime inicialização e árvore de turbinas ───
+    MultiTurbineUI.print_init(turbines=context.turbines, jit_time=jit_setup_time, mode_coupled=True)
+
     start_time = time.perf_counter()
 
     try:
-        logger.info(f"Simulating {num_turbines} turbine(s) [B={blades}, R={radius}m] using case: {case_name}")
-
         n_points = 20
         tsr_vec = np.linspace(1.0, 7.0, n_points)
 
-        cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec = _execute_tsr_sweep(
+        # Executa o sweep passando pelo seu próprio _execute_tsr_sweep
+        cp_vec, ct_vec, rp_vec, tp_vec, zp_vec, theta_vec, warnings = _execute_tsr_sweep(
             turbines=context.turbines,
             env=context.env,
             ntheta=context.ntheta,
@@ -604,7 +621,7 @@ def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[st
 
         elapsed = time.perf_counter() - start_time
 
-        export_coupled_case_results(
+        case_dir = export_coupled_case_results(
             case_name=case_name,
             config=config,
             turbines=context.turbines,
@@ -615,6 +632,19 @@ def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[st
             tp_vec=tp_vec,
             zp_vec=zp_vec,
             base_results_dir='results'
+        )
+
+        output_dir_str = str(case_dir.resolve()) if case_dir else "Disabled (save=false)"
+
+        # ─── CONEXÃO COM A UI: Exibe a tabela de resultados finais e resumo ───
+        MultiTurbineUI.print_results(
+            turbines=context.turbines,
+            total_time=elapsed,
+            output_dir=output_dir_str,
+            cp_results=cp_vec.T,
+            ct_results=ct_vec.T,
+            tsr_vec=tsr_vec,
+            warnings=warnings
         )
 
         return {
@@ -634,10 +664,11 @@ def run_simulation_case(params: Tuple[int, int, float, float, float]) -> Dict[st
         logger.error(f"Execution crashed for case {case_name}.", exc_info=True)
         raise
 
-
 def main() -> None:
     """Main execution thread."""
-    logger.info("Initializing system simulation setup...\n")
+    # ─── CONEXÃO COM A UI: Imprime o banner principal ───
+    MultiTurbineUI.print_header()
+
     try:
         config = load_config()
 
@@ -645,14 +676,7 @@ def main() -> None:
         solidity_val = config["turbine"]["solidity"][0] if isinstance(config["turbine"]["solidity"], list) else float(config["turbine"]["solidity"])
         vinf_val = config["environment"]["Vinf"][0] if isinstance(config["environment"]["Vinf"], list) else float(config["environment"]["Vinf"])
 
-        result = run_simulation_case((0, 0, chord_val, solidity_val, vinf_val))
-
-        print("\n" + "=" * 45)
-        print(f"{'SIMULATION PIPELINE SUMMARY':^45}")
-        print("=" * 45)
-        for key, value in result.items():
-            print(f"{key:<15}: {value}")
-        print("=" * 45 + "\n")
+        _ = run_simulation_case((0, 0, chord_val, solidity_val, vinf_val))
 
     except Exception as err:
         logger.critical(f"Pipeline crashed. Uncaught fatal error: {err}", exc_info=True)
