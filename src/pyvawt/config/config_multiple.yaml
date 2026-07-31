@@ -21,7 +21,7 @@ environment:
 
 solver:
   num_turbines: 2                # Number of coupled turbines in the simulation
-  method: file             # "neuralfoil" or "file". It's the way the cl and cd is obtained.
+  method: neuralfoil             # "neuralfoil" or "file". It's the way the cl and cd is obtained.
   fixed_parameter: omega         # "omega" or "vinf"
 
   neuralfoil:

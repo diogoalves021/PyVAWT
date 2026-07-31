@@ -11,7 +11,7 @@ import math
 import logging
 from pathlib import Path
 from typing import Callable, NamedTuple
-
+from dataclasses import dataclass
 import h5py
 import numpy as np
 from numba import njit
@@ -45,6 +45,20 @@ GL_WEIGHTS: np.ndarray = np.array([
 # DOMAIN DATA STRUCTURES
 # ==============================================================================
 
+class SolverResult(NamedTuple):
+    """Container for Actuator Cylinder simulation output parameters."""
+    CT: np.ndarray
+    CP: np.ndarray
+    Rp: np.ndarray
+    Tp: np.ndarray
+    Zp: np.ndarray
+    theta: np.ndarray
+    w_opt: np.ndarray
+    converged: bool
+    warnings: list[str]
+
+
+@dataclass(slots=True)
 class Turbine:
     """
     Physical and operational representation of a Vertical Axis Wind Turbine (VAWT).
@@ -52,9 +66,9 @@ class Turbine:
     Parameters
     ----------
     r : float
-        Rotor radius in meters ($m$).
+        Rotor radius in meters (m).
     chord : float
-        Blade chord length in meters ($m$).
+        Blade chord length in meters (m).
     twist : float
         Blade pitch / twist angle in radians.
     delta : float
@@ -64,18 +78,18 @@ class Turbine:
     af : Callable[[np.ndarray | float], tuple[np.ndarray | float, np.ndarray | float]]
         Airfoil polar evaluation callable returning `(cl, cd)` for query angle `alpha`.
     Omega : float
-        Rotor angular rotational speed in $rad/s$.
+        Rotor angular rotational speed in rad/s.
     centerX : float
-        Rotor hub center position along the X-axis ($m$).
+        Rotor hub center position along the X-axis (m).
     centerY : float
-        Rotor hub center position along the Y-axis ($m$).
+        Rotor hub center position along the Y-axis (m).
 
     Attributes
     ----------
     r : float
-        Rotor radius ($m$).
+        Rotor radius (m).
     chord : float
-        Blade chord length ($m$).
+        Blade chord length (m).
     twist : float
         Blade pitch angle (rad).
     delta : float
@@ -85,36 +99,35 @@ class Turbine:
     af : Callable
         Airfoil lookup callback function.
     Omega : float
-        Rotational speed ($rad/s$).
+        Rotational speed (rad/s).
     centerX : float
-        Hub X coordinate ($m$).
+        Hub X coordinate (m).
     centerY : float
-        Hub Y coordinate ($m$).
+        Hub Y coordinate (m).
     """
 
-    def __init__(
-        self,
-        r: float,
-        chord: float,
-        twist: float,
-        delta: float,
-        B: int,
-        af: Callable[[np.ndarray | float], tuple[np.ndarray | float, np.ndarray | float]],
-        Omega: float,
-        centerX: float,
-        centerY: float
-    ) -> None:
-        self.r = float(r)
-        self.chord = float(chord)
-        self.twist = float(twist)
-        self.delta = float(delta)
-        self.B = int(B)
-        self.af = af
-        self.Omega = float(Omega)
-        self.centerX = float(centerX)
-        self.centerY = float(centerY)
+    r: float
+    chord: float
+    twist: float
+    delta: float
+    B: int
+    af: Callable[[np.ndarray | float], tuple[np.ndarray | float, np.ndarray | float]]
+    Omega: float
+    centerX: float
+    centerY: float
+
+    def __post_init__(self) -> None:
+        self.r = float(self.r)
+        self.chord = float(self.chord)
+        self.twist = float(self.twist)
+        self.delta = float(self.delta)
+        self.B = int(self.B)
+        self.Omega = float(self.Omega)
+        self.centerX = float(self.centerX)
+        self.centerY = float(self.centerY)
 
 
+@dataclass(slots=True)
 class Environment:
     """
     Fluid domain physical properties container.
@@ -122,26 +135,30 @@ class Environment:
     Parameters
     ----------
     Vinf : float
-        Free stream inflow velocity in $m/s$.
+        Free stream inflow velocity in m/s.
     rho : float
-        Fluid mass density in $kg/m^3$.
+        Fluid mass density in kg/m^3.
     mu : float
-        Dynamic fluid viscosity in $Pa \cdot s$.
+        Dynamic fluid viscosity in Pa·s.
 
     Attributes
     ----------
     Vinf : float
-        Free stream velocity ($m/s$).
+        Free stream velocity (m/s).
     rho : float
-        Fluid density ($kg/m^3$).
+        Fluid density (kg/m^3).
     mu : float
-        Dynamic viscosity ($Pa \cdot s$).
+        Dynamic viscosity (Pa·s).
     """
 
-    def __init__(self, Vinf: float, rho: float, mu: float) -> None:
-        self.Vinf = float(Vinf)
-        self.rho = float(rho)
-        self.mu = float(mu)
+    Vinf: float
+    rho: float
+    mu: float
+
+    def __post_init__(self) -> None:
+        self.Vinf = float(self.Vinf)
+        self.rho = float(self.rho)
+        self.mu = float(self.mu)
 
 
 # ==============================================================================
@@ -886,7 +903,7 @@ def actuatorcylinder(
     env: Environment,
     ntheta: int,
     w0: np.ndarray | None = None
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
+) -> SolverResult:
     """
     Solves aerodynamic performance for single or coupled VAWT rotors using Actuator Cylinder theory.
 
@@ -903,22 +920,9 @@ def actuatorcylinder(
 
     Returns
     -------
-    CT : np.ndarray
-        Thrust Coefficients for each turbine of shape `(nturbines,)`.
-    CP : np.ndarray
-        Power Coefficients for each turbine of shape `(nturbines,)`.
-    Rp : np.ndarray
-        Radial force distributions matrix of shape `(ntheta, nturbines)`.
-    Tp : np.ndarray
-        Tangential force distributions matrix of shape `(ntheta, nturbines)`.
-    Zp : np.ndarray
-        Vertical force distributions matrix of shape `(ntheta, nturbines)`.
-    theta : np.ndarray
-        Azimuthal angle discretization vector of shape `(ntheta,)`.
-    w_opt : np.ndarray
-        Converged state vector of induction velocities.
-    warnings : list[str], optional
-        List of convergence warning messages (returned as an 8th element if present).
+    SolverResult
+        Structured tuple container with convergence status, performance coefficients,
+        force distributions, and solver warnings.
     """
     centerX = np.array([t.centerX for t in turbines])
     centerY = np.array([t.centerY for t in turbines])
@@ -965,7 +969,7 @@ def actuatorcylinder(
                 q_val, ka_val, *_ = radialforce(u, v, theta, turbines[i], env)
                 return _compute_residual_fast_single(A_single, q_val, ka_val, x)
 
-            result = root(resid_single, w0_single, method='lm', tol=tol)
+            result = root(resid_single, w0_single, method="lm", tol=tol)
             w_single = result.x
 
             if not result.success:
@@ -975,21 +979,31 @@ def actuatorcylinder(
 
             u = w_single[:ntheta]
             v = w_single[ntheta:]
-            _, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
+            _, k[i], CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(
+                u, v, theta, turbines[i], env
+            )
 
             if nturbines > 1:
                 w0_coupled[i * ntheta : (i + 1) * ntheta] = u
                 w0_coupled[ntheta * nturbines + i * ntheta : ntheta * nturbines + (i + 1) * ntheta] = v
 
         if nturbines == 1:
-            if solver_warnings:
-                return CT, CP, Rp, Tp, Zp, theta, w_single, solver_warnings
-            return CT, CP, Rp, Tp, Zp, theta, w_single
+            return SolverResult(
+                CT=CT,
+                CP=CP,
+                Rp=Rp,
+                Tp=Tp,
+                Zp=Zp,
+                theta=theta,
+                w_opt=w_single,
+                converged=(len(solver_warnings) == 0),
+                warnings=solver_warnings,
+            )
 
     def resid_multiple(x: np.ndarray) -> np.ndarray:
         return residual(x, A_full, theta, k, turbines, env)
 
-    result = root(resid_multiple, w0_coupled, method='lm', tol=tol)
+    result = root(resid_multiple, w0_coupled, method="lm", tol=tol)
     w_coupled = result.x
 
     if not result.success:
@@ -1001,9 +1015,18 @@ def actuatorcylinder(
         idx = list(range(i * ntheta, (i + 1) * ntheta))
         u = w_coupled[idx]
         v = w_coupled[ntheta * nturbines + np.array(idx)]
-        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(u, v, theta, turbines[i], env)
+        _, _, CT[i], CP[i], Rp[:, i], Tp[:, i], Zp[:, i] = radialforce(
+            u, v, theta, turbines[i], env
+        )
 
-    if solver_warnings:
-        return CT, CP, Rp, Tp, Zp, theta, w_coupled, solver_warnings
-
-    return CT, CP, Rp, Tp, Zp, theta, w_coupled
+    return SolverResult(
+        CT=CT,
+        CP=CP,
+        Rp=Rp,
+        Tp=Tp,
+        Zp=Zp,
+        theta=theta,
+        w_opt=w_coupled,
+        converged=(len(solver_warnings) == 0),
+        warnings=solver_warnings,
+    )
