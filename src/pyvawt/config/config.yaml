@@ -4,7 +4,7 @@
 
 turbine:
   r: 17.5                        # Rotor radius (m) - Verify if your solver expects radius or diameter
-  height: 3.0                    # Total height of the 3D domain (m)
+  height: 24.3                    # Total height of the 3D domain (m)
   twist: 0.0                     # Blade twist angle (deg)
   delta: 0.0                     # Blade pitch/offset angle (deg)
   chord:
@@ -47,8 +47,8 @@ solver:
     enabled: true                # Enable 3D effects/domain simulation
 
     settings:                    # [Active only if enabled = true]
-      vertical_layers: 20         # Number of vertical grid divisions for cylinder discretization
-      discretization_power: 2    # Vertical grid spacing law: 1 = linear, 2 = power law (nodes concentrated at top)
+      vertical_layers: 90         # Number of vertical grid divisions for cylinder discretization
+      discretization_power: 1    # Vertical grid spacing law: 1 = linear, 2 = power law (nodes concentrated at top)
       velocity_profile: power_law # Atmospheric wind profile model: 'constant' or 'power_law'
 
 submodels:

@@ -5,7 +5,6 @@ import os
 import h5py
 import csv
 import time
-from datetime import timedelta
 import traceback
 import copy
 from scipy.integrate import quad
@@ -14,14 +13,20 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
 from typing import Any
 
-from src.pyvawt.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
-#from src.pyvawt.submodels.boeing_vertol import af, Boeing_Vertol
-from src.pyvawt.submodels.boeing_vertol import boeing_vertol_jit, interp2d_scalar
-from src.pyvawt.single.data_reading import readaerodyn
-from src.pyvawt.single.utils import save_config, format_time
-from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil
-from src.pyvawt.single.utils import load_config, get_tc_from_airfoil, detect_stall_angles, save_config, resolve_turbine_geometry
-from src.pyvawt.ui.ui import UI
+from src.pyvawt.single.submodels.flow_curvature import FlowCurvatureManager, FlowCurvatureModel
+from src.pyvawt.single.submodels.boeing_vertol import boeing_vertol_jit, interp2d_scalar
+from src.pyvawt.single.aerodynamics import (
+    readaerodyn, 
+    get_cl_cd_neuralfoil, 
+    NeuralFoilAerodynamics,
+    detect_stall_angles,
+    get_tc_from_airfoil
+)
+from src.pyvawt.single.export import save_config
+from src.pyvawt.single.geometry import resolve_turbine_geometry
+from src.pyvawt.single.interpolation import interpolate_2d_lut, fast_trapz
+from src.pyvawt.single.utils import load_config
+from src.pyvawt.ui.ui import UI, format_time
 
 # Global RAM cache dictionary for storing precomputed HDF5 influence matrices
 _MATRIX_H5_CACHE: dict[tuple[int, str], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -444,303 +449,7 @@ class Turbine:
         self.centerY = centerY
         self.solidity = solidity
         self.aero = aero_model
-
-class Aerodynamics:
-    '''
-    Abstract base class for aerodynamics models.
-    '''
-    def get_cl_cd(self, alpha, W=None):
-        '''
-        Returns the lift and drag coefficients.
-
-        Parameters
-        ----------
-        alpha : float
-            Angle of attack [rad].
-        W : float, optional
-            Relative wind speed [m/s].
-
-        Returns
-        -------
-        tuple of floats
-            (Cl, Cd)
-        '''
-        raise NotImplementedError("Subclasses must implement this method.")
-
-@nb.njit(fastmath=True, cache=True)
-def interpolate_2d_lut(
-    alpha_vec: np.ndarray,
-    W_vec: np.ndarray,
-    alpha_grid: np.ndarray,
-    W_grid: np.ndarray,
-    table: np.ndarray,
-) -> np.ndarray:
-    """
-    Perform fast 2D bilinear interpolation over a structured Lookup Table (LUT).
-
-    Maps query angles of attack to the interval [-π, π] and evaluates table values
-    using index bounding and uniform grid spacing.
-
-    Parameters
-    ----------
-    alpha_vec : np.ndarray
-        1D array of query angle of attack values [rad].
-    W_vec : np.ndarray
-        1D array of query relative velocity values [m/s].
-    alpha_grid : np.ndarray
-        1D array of uniformly spaced grid coordinates for angle of attack [rad].
-    W_grid : np.ndarray
-        1D array of uniformly spaced grid coordinates for relative velocity [m/s].
-    table : np.ndarray
-        2D matrix of shape `(len(alpha_grid), len(W_grid))` containing the
-        precomputed values to interpolate (e.g., aerodynamic coefficients).
-
-    Returns
-    -------
-    np.ndarray
-        1D array of bilinearly interpolated values corresponding to each (`alpha_vec`, `W_vec`) pair.
-    """
-    n = len(alpha_vec)
-    out = np.empty(n, dtype=np.float64)
-
-    n_alpha = len(alpha_grid)
-    n_w = len(W_grid)
-
-    d_alpha = alpha_grid[1] - alpha_grid[0]
-    d_w = W_grid[1] - W_grid[0]
-
-    alpha_min, alpha_max = alpha_grid[0], alpha_grid[-1]
-    w_min, w_max = W_grid[0], W_grid[-1]
-
-    for i in range(n):
-        # Map angle of attack to [-pi, pi]
-        a = (alpha_vec[i] + np.pi) % (2.0 * np.pi) - np.pi
-        w = W_vec[i]
-
-        # Index search and bounding for alpha
-        if a <= alpha_min:
-            ia = 0
-            u = 0.0
-        elif a >= alpha_max:
-            ia = n_alpha - 2
-            u = 1.0
-        else:
-            pos_a = (a - alpha_min) / d_alpha
-            ia = int(pos_a)
-            u = pos_a - ia
-
-        # Index search and bounding for relative velocity W
-        if w <= w_min:
-            iw = 0
-            v = 0.0
-        elif w >= w_max:
-            iw = n_w - 2
-            v = 1.0
-        else:
-            pos_w = (w - w_min) / d_w
-            iw = int(pos_w)
-            v = pos_w - iw
-
-        # Bilinear interpolation
-        f00 = table[ia, iw]
-        f10 = table[ia + 1, iw]
-        f01 = table[ia, iw + 1]
-        f11 = table[ia + 1, iw + 1]
-
-        out[i] = (
-            (1.0 - u) * (1.0 - v) * f00
-            + u * (1.0 - v) * f10
-            + (1.0 - u) * v * f01
-            + u * v * f11
-        )
-
-    return out
-
-class NeuralFoilAerodynamics(Aerodynamics):
-    """
-    Aerodynamic model optimized with Look-Up Table (LUT) generation and RAM caching.
-
-    Evaluates aerodynamic lift (Cl) and drag (Cd) coefficients using NeuralFoil
-    pre-computed matrices and fast bilinear 2D interpolation.
-
-    Parameters
-    ----------
-    turbine_index : int
-        Index referencing turbine parameters in the configuration.
-    airfoil_index : int
-        Index referencing the airfoil profile in the configuration.
-    config : dict, optional
-        Simulation configuration dictionary. If None, attempts default path loading.
-    n_alpha : int, default=721
-                Number of grid discretization points for angle of attack [-π, π].
-    n_W : int, default=50
-        Number of grid discretization points for relative velocity W.
-    W_min : float, default=0.1
-        Minimum relative velocity boundary [m/s].
-    W_max : float, default=150.0
-        Maximum relative velocity boundary [m/s].
-
-    Attributes
-    ----------
-    turbine_index : int
-        Index referencing turbine parameters.
-    airfoil_index : int
-        Index referencing airfoil profile.
-    W_min : float
-        Minimum velocity boundary [m/s].
-    W_max : float
-        Maximum velocity boundary [m/s].
-    alpha_grid : np.ndarray
-        1D array of angle of attack grid points [rad].
-    W_grid : np.ndarray
-        1D array of relative velocity grid points [m/s].
-    cl_table : np.ndarray
-        2D matrix of precomputed lift coefficients [-].
-    cd_table : np.ndarray
-        2D matrix of precomputed drag coefficients [-].
-    """
-
-    def __init__(
-        self,
-        turbine_index: int,
-        airfoil_index: int,
-        config: dict | None = None,
-        n_alpha: int = 721,
-        n_W: int = 50,
-        W_min: float = 0.1,
-        W_max: float = 150.0,
-    ) -> None:
-        self.turbine_index = turbine_index
-        self.airfoil_index = airfoil_index
-        self.W_min = W_min
-        self.W_max = W_max
-
-        if config is None:
-            try:
-                config = load_config()
-            except TypeError:
-                config = load_config("src/pyvawt/config/config.yaml")
-
-        airfoil_cfg = config["solver"]["neuralfoil"]["airfoil"]
-        airfoil_name = (
-            airfoil_cfg[airfoil_index]
-            if isinstance(airfoil_cfg, (list, tuple))
-            else airfoil_cfg
-        )
-
-        chord_cfg = config["turbine"]["chord"]
-        chord = (
-            chord_cfg[turbine_index]
-            if isinstance(chord_cfg, (list, tuple))
-            else chord_cfg
-        )
-        rho = config["environment"]["rho"]
-        mu = config["environment"]["mu"]
-
-        cache_key = (airfoil_name, chord, rho, mu, n_alpha, n_W, W_min, W_max)
-
-        # Check if the table is already cached in RAM
-        if cache_key in _AERO_LUT_CACHE:
-            (
-                self.alpha_grid,
-                self.W_grid,
-                self.cl_table,
-                self.cd_table,
-            ) = _AERO_LUT_CACHE[cache_key]
-        else:
-            # Compute and cache matrices if evaluated for the first time
-            self.alpha_grid = np.linspace(-np.pi, np.pi, n_alpha)
-            self.W_grid = np.linspace(W_min, W_max, n_W)
-
-            self.cl_table = np.zeros((n_alpha, n_W), dtype=np.float64)
-            self.cd_table = np.zeros((n_alpha, n_W), dtype=np.float64)
-
-            for j, W_val in enumerate(self.W_grid):
-                cl_vec, cd_vec = get_cl_cd_neuralfoil(
-                    self.alpha_grid, W_val, turbine_index, airfoil_index
-                )
-                self.cl_table[:, j] = cl_vec
-                self.cd_table[:, j] = cd_vec
-
-            _AERO_LUT_CACHE[cache_key] = (
-                self.alpha_grid,
-                self.W_grid,
-                self.cl_table,
-                self.cd_table,
-            )
-
-    def get_cl_cd(
-        self, alpha: float | np.ndarray, W: float | np.ndarray
-    ) -> tuple[float | np.ndarray, float | np.ndarray]:
-        """
-        Evaluate lift (Cl) and drag (Cd) coefficients via 2D LUT interpolation.
-
-        Parameters
-        ----------
-        alpha : float or np.ndarray
-            Angle of attack [rad].
-        W : float or np.ndarray
-            Relative flow velocity [m/s].
-
-        Returns
-        -------
-        cl : float or np.ndarray
-            Interpolated lift coefficient(s) [-].
-        cd : float or np.ndarray
-            Interpolated drag coefficient(s) [-].
-        """
-        # Ensure array format alignment and convert to 1D contiguous arrays
-        alpha_arr = np.atleast_1d(np.asarray(alpha, dtype=np.float64))
-        W_arr = np.atleast_1d(np.asarray(W, dtype=np.float64))
-
-        alpha_b, W_b = np.broadcast_arrays(alpha_arr, W_arr)
-        alpha_flat = alpha_b.ravel()
-        W_flat = W_b.ravel()
-
-        # Execute Numba kernel interpolation passing 5 required parameters
-        cl_flat = interpolate_2d_lut(
-            alpha_flat, W_flat, self.alpha_grid, self.W_grid, self.cl_table
-        )
-        cd_flat = interpolate_2d_lut(
-            alpha_flat, W_flat, self.alpha_grid, self.W_grid, self.cd_table
-        )
-
-        # Return scalars or arrays matching original input structure
-        if np.isscalar(alpha) and np.isscalar(W):
-            return cl_flat[0], cd_flat[0]
-
-        return cl_flat.reshape(alpha_b.shape), cd_flat.reshape(alpha_b.shape)
-
-class FileAerodynamics(Aerodynamics):
-    '''
-    Aerodynamics model using airfoil data from a file to calculate Cl and Cd.
-
-    Parameters
-    ----------
-    filename : str
-        Path to the file containing airfoil data.
-    '''
-    def __init__(self, filename):
-        self.af_func = readaerodyn(filename)
-
-    def get_cl_cd(self, alpha, W=None):
-        '''
-        Returns Cl and Cd interpolated from airfoil data.
-
-        Parameters
-        ----------
-        alpha : float
-            Angle of attack [rad].
-        W : float, optional
-            Not used, kept for compatibility with interface.
-
-        Returns
-        -------
-        tuple of floats
-            (Cl, Cd)
-        '''
-        return self.af_func(alpha)
-        
+ 
 
 class Environment:
     '''
@@ -762,71 +471,6 @@ class Environment:
         self.BV_DynamicFlagL = 0
         self.BV_DynamicFlagD = 0
 
-
-@nb.njit(fastmath=True, cache=True)
-def fast_trapz(y: np.ndarray, x: np.ndarray) -> float:
-    """
-    Compute 1D numerical integration using the trapezoidal rule.
-
-    Parameters
-    ----------
-    y : np.ndarray
-        1D array of function values to integrate.
-    x : np.ndarray
-        1D array of sample points corresponding to `y`.
-
-    Returns
-    -------
-    float
-        Approximated integral value.
-    """
-    n = len(x)
-    integral = 0.0
-    for i in range(n - 1):
-        integral += 0.5 * (y[i] + y[i + 1]) * (x[i + 1] - x[i])
-    return integral
-
-
-def warmup_numba_kernels(verbose: bool = True) -> None:
-    """
-    Pre-compile or load cached Numba JIT kernels prior to simulation execution.
-
-    Parameters
-    ----------
-    verbose : bool, default=True
-        If True, displays initialization status and compilation elapsed time
-        via the UI helper.
-    """
-    if verbose:
-        UI.status("JIT Engine (Numba)", "Compiling C kernels...", level="info")
-
-    t0 = time.perf_counter()
-    dummy_1d = np.zeros(10, dtype=np.float64)
-    dummy_grid = np.linspace(-1.0, 1.0, 10, dtype=np.float64)
-    dummy_table = np.zeros((10, 10), dtype=np.float64)
-
-    try:
-        _radialforce_kernel(
-            dummy_1d, dummy_1d, dummy_grid, 10.0, 1.0, 0.0, 0.0, 3, 10.0, 0.1,
-            10.0, 1.2, 1.8e-5, dummy_grid, dummy_grid, dummy_table, dummy_table,
-            True, 0.2, -0.2, 0.0, 0.12
-        )
-        if verbose:
-            dt = time.perf_counter() - t0
-            UI.status("JIT Engine (Numba)", f"Ready ({dt:.2f}s)", level="ok")
-    except Exception as e:
-        if verbose:
-            UI.status("JIT Engine (Numba)", f"Failed: {e}", level="warn")
-
-
-def _worker_init() -> None:
-    """
-    Initializer function for parallel worker processes.
-
-    Triggers silent compilation and loading of Numba kernels within each spawned
-    multiprocessing process pool worker.
-    """
-    warmup_numba_kernels(verbose=False)
 
 @nb.njit(fastmath=True, cache=True)
 def _radialforce_kernel(
@@ -852,6 +496,9 @@ def _radialforce_kernel(
     aoa_stall_neg: float,
     AOA0: float,
     tc: float,
+    use_tip_loss: bool = False,
+    z: float = 0.0,
+    H: float = 0.0,
 ) -> tuple[
     np.ndarray,
     float,
@@ -973,7 +620,7 @@ def _radialforce_kernel(
         cl[i] = interp2d_scalar(alpha_val, w_val, alpha_grid, W_grid, cl_table)
         cd[i] = interp2d_scalar(alpha_val, w_val, alpha_grid, W_grid, cd_table)
 
-    # 2. Dynamic Stall Model (Boeing-Vertol) - In-place array update without copying
+    # 2. Dynamic Stall Model (Boeing-Vertol)
     if use_dynamic_stall:
         dt = dtheta / abs_Omega if abs_Omega > 1e-6 else 1.0
         flagL = 0
@@ -1021,6 +668,21 @@ def _radialforce_kernel(
     cos_delta = np.cos(delta)
     tan_delta = np.tan(delta)
 
+    # 4. Uncorrected Normal and Tangential Coefficients
+    cn = np.empty(n, dtype=np.float64)
+    ct = np.empty(n, dtype=np.float64)
+
+    for i in range(n):
+        c_phi = np.cos(phi[i])
+        s_phi = np.sin(phi[i])
+        cn[i] = cl[i] * c_phi + cd[i] * s_phi
+        ct[i] = cl[i] * s_phi - cd[i] * c_phi
+
+    # 4b. Apply Tip-Loss Correction (if enabled)
+    if use_tip_loss and H > 1e-6:
+        cn, ct, _ = apply_tip_loss(cn, ct, z, H, B, Omega, r, Vinf)
+
+    # 4c. Fused Force Decomposition Loop
     q = np.empty(n, dtype=np.float64)
     Rp = np.empty(n, dtype=np.float64)
     Tp = np.empty(n, dtype=np.float64)
@@ -1030,13 +692,9 @@ def _radialforce_kernel(
     inv_Vinf = 1.0 / Vinf if Vinf != 0.0 else 0.0
     half_rho = 0.5 * rho
 
-    # 4. Fused Force Decomposition Loop
     for i in range(n):
-        c_phi = np.cos(phi[i])
-        s_phi = np.sin(phi[i])
-
-        cn_i = cl[i] * c_phi + cd[i] * s_phi
-        ct_i = cl[i] * s_phi - cd[i] * c_phi
+        cn_i = cn[i]
+        ct_i = ct[i]
 
         w_ratio = W[i] * inv_Vinf
         q[i] = (sigma / (4.0 * np.pi)) * cn_i * (w_ratio * w_ratio)
@@ -1078,7 +736,11 @@ def radialforce(
     turbine: Any,
     env: Any,
     *args: Any,
+    config: dict | None = None,
     use_dynamic_stall: bool = True,
+    use_tip_loss: bool | None = None,
+    z: float | None = None,
+    H: float | None = None,
     **kwargs: Any,
 ) -> tuple[
     np.ndarray,
@@ -1134,9 +796,51 @@ def radialforce(
         - `alpha` : Local angle of attack distribution [rad].
         - `W` : Local relative flow velocity distribution [m/s].
     """
-    aero = turbine.aero
 
-    # Extract aerodynamic stall parameters with fallbacks
+    # 1. Resolve configuration dictionary from arguments or kwargs
+    if config is None:
+        config = kwargs.get("config", None)
+        if config is None:
+            for arg in args:
+                if isinstance(arg, dict):
+                    config = arg
+                    break
+
+    # 2. Access 'submodels' section from config
+    submodels_cfg = config.get("submodels", {}) if config else {}
+
+    # Resolve 'use_tip_loss' from config submodels if not explicitly passed
+    if use_tip_loss is None:
+        if "tip_loss" in submodels_cfg:
+            use_tip_loss = bool(submodels_cfg.get("tip_loss", False))
+        elif config is not None:
+            # Fallback check for legacy config structures
+            sim3d_cfg = config.get("simulation", {}).get(
+                "simulation3d", {}
+            ) or config.get("solver", {}).get("simulation3d", {})
+            use_tip_loss = bool(sim3d_cfg.get("tip_loss", False))
+        else:
+            use_tip_loss = False
+
+    # 3. Extract vertical coordinate z and total height H safely
+    z_val: float | None = z if z is not None else kwargs.get("z", None)
+    H_val: float | None = H if H is not None else kwargs.get("H", None)
+
+    # Secondary fallback check in positional *args tuple
+    if z_val is None and len(args) >= 5:
+        z_val = args[4]
+    if H_val is None and len(args) >= 6:
+        H_val = args[5]
+
+    # Convert flags and parameters to C-compatible float/bool primitives
+    enable_tip_loss: bool = bool(
+        use_tip_loss and (z_val is not None) and (H_val is not None)
+    )
+    z_float: float = float(z_val) if z_val is not None else 0.0
+    H_float: float = float(H_val) if H_val is not None else 0.0
+
+    # 4. Extract aerodynamic stall parameters with safe fallbacks
+    aero = turbine.aero
     aoa_stall_pos = float(getattr(aero, "aoa_stall_pos", np.radians(12.0)))
     aoa_stall_neg = float(getattr(aero, "aoa_stall_neg", np.radians(-12.0)))
     AOA0 = float(getattr(aero, "AOA0", 0.0))
@@ -1165,6 +869,9 @@ def radialforce(
         aoa_stall_neg,
         AOA0,
         tc,
+        enable_tip_loss,
+        z_float,
+        H_float,
     )
 
 '''
@@ -1228,6 +935,7 @@ def apply_tip_loss(
     F = min(max(F, Fmin), 1.0)
 
     return F * cn, F * ct, F
+
 
 #------------------------------------
 #

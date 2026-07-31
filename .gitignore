@@ -37,5 +37,4 @@ test/runtest_*
 *.odt
 *.zip
 Fluxogramas/
-test_simulation.py
-
+.cache_lut/

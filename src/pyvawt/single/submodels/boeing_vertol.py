@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from src.pyvawt.single.data_generation import get_cl_cd_neuralfoil, load_config
+from src.pyvawt.single.aerodynamics import get_cl_cd_neuralfoil
 #from src.pyvawt.simulation import Turbine, Environment
 import numba as nb
 

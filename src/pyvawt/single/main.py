@@ -1,32 +1,58 @@
+"""Main entry point for PYVAWT aerodynamic simulations."""
+
 import os
-import csv
 import time
-import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from src.pyvawt.single.simulation import run_simulation_case, simulate_3D_turbine, warmup_numba_kernels, _worker_init
+from src.pyvawt.single.aerodynamics import detect_stall_angles
+from src.pyvawt.single.export import (
+    export_2d_results,
+    export_3d_results,
+)
+from src.pyvawt.single.simulation import (
+    run_simulation_case,
+    simulate_3D_turbine,
+)
 from src.pyvawt.single.utils import (
+    _worker_init,
     load_config,
-    detect_stall_angles,
-    print_config,
-    print_summary,
     parse_args,
+    warmup_numba_kernels,
+)
+from src.pyvawt.ui.ui import (
+    UI,
+    format_time,
+    print_config,
     print_simulation_footer,
     print_simulation_results,
-    format_time,
-    export_3d_results,
-    export_2d_results
+    print_summary,
 )
 
-from src.pyvawt.ui.ui import UI
+# Execution command example:
+# uv run python3 -m src.pyvawt.single.main
 
-#run command: uv run python3 -m src.pyvawt.single.main
-# test/data/config.yaml src/pyvawt/config/config.yaml
 
-def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
+def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
     """
-    Runs a batch of aerodynamic simulations defined by the configuration file.
-    Handles both 3D multi-slice mode and 2D parallel sweep mode.
+    Execute a batch of aerodynamic simulations specified by a configuration file.
+
+    Handles pre-processing initialization, stall angle detection, and routing
+    for either 3D multi-slice evaluations or 2D parallel parameter sweeps.
+
+    Parameters
+    ----------
+    config_path : str, default="src/pyvawt/config/config.yaml"
+        Fallback file path to the default simulation configuration YAML file if
+        no CLI argument is provided.
+
+    Returns
+    -------
+    None
+
+    See Also
+    --------
+    run_simulation_case : Solves a single 2D simulation instance.
+    simulate_3D_turbine : Executes vertical discretization for 3D mode.
     """
     # 1. Header & Initialization
     UI.banner("PYVAWT - AERODYNAMIC SIMULATOR")
@@ -37,9 +63,9 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     args = parse_args()
     config = load_config(path=args.config or config_path)
 
-    # Compute stall angles for all configured airfoils
+    # Compute static stall angles for all configured airfoils
     stall_angles = {}
-    for airfoil_index in range(len(config['solver']['neuralfoil']['airfoil'])):
+    for airfoil_index in range(len(config["solver"]["neuralfoil"]["airfoil"])):
         aoaStallPos, aoaStallNeg = detect_stall_angles(config, airfoil_index)
         stall_angles[airfoil_index] = (aoaStallPos, aoaStallNeg)
 
@@ -50,16 +76,16 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     # =========================================================================
     # 2. CHECK 3D SIMULATION MODE
     # =========================================================================
-    sim3d_cfg = config.get('solver', {}).get('simulation3d', {})
+    sim3d_cfg = config.get("solver", {}).get("simulation3d", {})
 
-    if sim3d_cfg.get('enabled', False):
+    if sim3d_cfg.get("enabled", False):
         res_3d = simulate_3D_turbine(config, stall_angles)
-        
+
         export_3d_results(
-            tsr=res_3d['tsr'], 
-            cp_3d=res_3d['cp_3d'], 
-            config=config, 
-            output_dir=res_3d['result_dir']
+            tsr=res_3d["tsr"],
+            cp_3d=res_3d["cp_3d"],
+            config=config,
+            output_dir=res_3d["result_dir"],
         )
         return
 
@@ -68,10 +94,10 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     # =========================================================================
     UI.section("EXECUTION (2D SWEEP)")
 
-    airfoil_indices = list(range(len(config['solver']['neuralfoil']['airfoil'])))
-    chords = config['turbine']['chord']
-    solidities = config['turbine']['solidity']
-    vinfs = config['environment']['Vinf'] 
+    airfoil_indices = list(range(len(config["solver"]["neuralfoil"]["airfoil"])))
+    chords = config["turbine"]["chord"]
+    solidities = config["turbine"]["solidity"]
+    vinfs = config["environment"]["Vinf"]
     flow_cfg = config.get("submodels", {}).get("flow_curvature", {})
 
     combinations = [
@@ -86,7 +112,7 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     results = []
     start_time = time.perf_counter()
 
-    # --- OTIMIZAÇÃO: CASO ÚNICO (Sem overhead de ProcessPool) ---
+    # --- Single-case execution (bypasses ProcessPoolExecutor overhead) ---
     if total == 1:
         UI.status("Simulation Cases", "1 combination (Single-Core Direct Execution)")
         params = combinations[0]
@@ -94,19 +120,23 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
         results.append(result)
         UI.progress_bar(1, 1, time.perf_counter() - start_time, prefix="2D Sweep")
 
-    # --- VARREDURA MULTI-CORE (Throttled Progress Bar) ---
+    # --- Multi-core parameter sweep (rate-limited progress updates) ---
     else:
-        num_workers = min(total, os.cpu_count())
+        num_workers = min(total, os.cpu_count() or 1)
         UI.status("Simulation Cases", f"{total} combinations")
         UI.status("Active CPU Cores", f"{num_workers}")
         print()
 
         completed = 0
-        last_update = 0.0  # Controle de tempo para limite de FPS do terminal
+        last_update = 0.0  # Timestamp control for UI frame-rate limiting
 
-        with ProcessPoolExecutor(max_workers=num_workers, initializer=_worker_init) as executor:
+        with ProcessPoolExecutor(
+            max_workers=num_workers, initializer=_worker_init
+        ) as executor:
             futures = {
-                executor.submit(run_simulation_case, params, config, flow_cfg, stall_angles): params
+                executor.submit(
+                    run_simulation_case, params, config, flow_cfg, stall_angles
+                ): params
                 for params in combinations
             }
 
@@ -115,21 +145,29 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
                     result = future.result()
                 except Exception as e:
                     params = futures.get(future)
-                    result = {'name': str(params), 'status': 'ERROR', 'time_sec': 0.0, 'error': repr(e)}
-                
+                    result = {
+                        "name": str(params),
+                        "status": "ERROR",
+                        "time_sec": 0.0,
+                        "error": repr(e),
+                    }
+
                 results.append(result)
                 completed += 1
 
-                # Atualiza a barra no máximo a cada 0.05s (20 FPS) ou na conclusão
+                # Refresh progress bar at most every 0.05s (20 FPS) or on final completion
                 now = time.perf_counter()
                 if (now - last_update > 0.05) or (completed == total):
-                    UI.progress_bar(completed, total, now - start_time, prefix="2D Sweep")
+                    UI.progress_bar(
+                        completed, total, now - start_time, prefix="2D Sweep"
+                    )
                     last_update = now
+
     # =========================================================================
     # 4. EXPORT & SUMMARY
     # =========================================================================
     UI.section("EXPORT & SUMMARY")
-    
+
     log_path = export_2d_results(results, config)
     total_time = time.perf_counter() - start_time
 
@@ -137,9 +175,6 @@ def run_simulation(config_path: str = 'src/pyvawt/config/config.yaml'):
     UI.status("Results Log", log_path, level="ok")
     print()
 
-    # Detailed summary breakdown
-    # print_simulation_results(results, start_time, log_path)
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     run_simulation()
