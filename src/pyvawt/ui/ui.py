@@ -171,7 +171,7 @@ class MultiTurbineUI:
         """
         Display the main banner header for multi-turbine simulations.
         """
-        UI.banner("PYVAWT - MULTI-TURBINE AERODYNAMIC SIMULATOR")
+        UI.banner("PYVAWT - MULTI-TURBINE SOLVER MODULE")
 
     @staticmethod
     def print_init(
@@ -336,25 +336,93 @@ def format_time(seconds: float | str) -> str:
         return str(seconds)
 
 
-def print_config(config: dict[str, Any]) -> None:
+def _format_value(value: Any) -> str:
+    """Format configuration primitive values into clean terminal strings."""
+    if isinstance(value, bool):
+        return "Enabled" if value else "Disabled"
+    if isinstance(value, list) and len(value) == 1:
+        return str(value[0])
+    if isinstance(value, dict):
+        # Format inline dictionary without raw brackets/quotes
+        formatted_items = [
+            f"{k}={_format_value(v)}"
+            for k, v in value.items()
+            if not isinstance(v, dict)
+        ]
+        return ", ".join(formatted_items) if formatted_items else str(value)
+    return str(value)
+
+
+def print_simulation_config(config: dict[str, Any]) -> None:
     """
-    Print formatted simulation configuration parameter sections.
+    Print simulation configuration in a clean, standardized CLI box style.
 
     Parameters
     ----------
-    config : dict
-        Dictionary containing configuration sections and parameters.
+    config : dict[str, Any]
+        Configuration dictionary containing turbine, environment, solver,
+        submodels, and output sections.
     """
-    print("\nSimulation parameters")
-    print("=" * 40)
+    print("\n─── SIMULATION CONFIGURATION ────────────────────────────────────\n")
 
-    for section, params in config.items():
-        print(f"\n{section.upper()}")
-        print("-" * 40)
+    section_labels: dict[str, str] = {
+        "turbine": "TURBINE",
+        "environment": "ENVIRONMENT",
+        "solver": "SOLVER",
+        "submodels": "SUBMODELS",
+        "output": "OUTPUT SETTINGS",
+    }
 
-        if isinstance(params, dict):
-            for key, value in params.items():
-                print(f"{key:<20} : {value}")
+    key_aliases: dict[str, str] = {
+        # Turbine
+        "r": "Radius (r)",
+        "height": "Height",
+        "twist": "Twist Angle",
+        "delta": "Cone/Inclin. Angle (delta)",
+        "chord": "Blade Chord",
+        "B": "Number of Blades (B)",
+        "solidity": "Solidity",
+        "centerX": "Center X",
+        "centerY": "Center Y",
+        "Omega": "Rotational Speed (Omega)",
+        "ntheta": "Azimuthal Discretization",
+        # Environment
+        "Vinf": "Freestream Velocity (Vinf)",
+        "rho": "Air Density (rho)",
+        "mu": "Dynamic Viscosity (mu)",
+        # Solver
+        "tsr": "TSR Range",
+        "method": "Polar Generator Method",
+        "fixed_parameter": "Fixed Parameter",
+        "neuralfoil": "NeuralFoil Settings",
+        "file": "Data File Source",
+        "simulation3d": "3D Simulation Setup",
+        # Submodels
+        "tip_loss": "Tip Loss Correction",
+        "dynamic_stall": "Dynamic Stall Model",
+        "flow_curvature": "Flow Curvature Model",
+        # Output
+        "save": "Save Data Output",
+        "save_config": "Save Config File",
+        "save_plot": "Save Plots",
+        "data_file": "Data Export Format",
+        "plot_image": "Plot Resolution/Format",
+        "cp_theta": "Cp-Theta Analysis",
+    }
+
+    for sec_key, sec_data in config.items():
+        if not isinstance(sec_data, dict):
+            continue
+
+        title = section_labels.get(sec_key, sec_key.upper())
+        print(f"  [{title}]")
+
+        for key, val in sec_data.items():
+            label = key_aliases.get(key, key)
+            formatted_val = _format_value(val)
+            print(f"  • {label:<30} : {formatted_val}")
+
+        print()  # Spacer line between sections
 
 
 def print_summary(config: dict[str, Any]) -> None:

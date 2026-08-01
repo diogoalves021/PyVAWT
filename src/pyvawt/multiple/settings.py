@@ -6,6 +6,7 @@ configuration files for Vertical Axis Wind Turbine (VAWT) simulations.
 """
 from __future__ import annotations
 
+import argparse
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -85,3 +86,144 @@ def load_config(path: str | Path = "src/pyvawt/config/config_multiple.yaml") -> 
     _ensure_list(nf_cfg, "airfoil")
 
     return config
+
+
+def _format_value(value: Any) -> str:
+    """Format configuration primitive values into clean terminal strings."""
+    if isinstance(value, bool):
+        return "Enabled" if value else "Disabled"
+    if isinstance(value, list) and len(value) == 1:
+        return str(value[0])
+    if isinstance(value, dict):
+        formatted_items = [
+            f"{k}={_format_value(v)}"
+            for k, v in value.items()
+            if not isinstance(v, dict)
+        ]
+        return ", ".join(formatted_items) if formatted_items else str(value)
+    return str(value)
+
+
+def display_multi_config(config: dict[str, Any]) -> None:
+    """
+    Print multi-turbine simulation configuration in standardized CLI style.
+
+    Parameters
+    ----------
+    config : dict[str, Any]
+        Configuration dictionary containing layout, environment, solver,
+        submodels, and output parameters.
+    """
+    print("\n─── SIMULATION CONFIGURATION ────────────────────────────────────\n")
+
+    # 1. Turbine & Layout
+    turbine_cfg = config.get("turbine", {})
+    if turbine_cfg:
+        print("  [TURBINE LAYOUT & ARRAY]")
+        
+        # Extract turbine position vectors
+        center_x = turbine_cfg.get("centerX", [0.0])
+        center_y = turbine_cfg.get("centerY", [0.0])
+        
+        if not isinstance(center_x, list):
+            center_x = [center_x]
+        if not isinstance(center_y, list):
+            center_y = [center_y]
+
+        num_turbines = max(len(center_x), len(center_y))
+        print(f"  • {'Total Turbines':<30} : {num_turbines}")
+
+        for i in range(num_turbines):
+            x_pos = center_x[i] if i < len(center_x) else center_x[-1]
+            y_pos = center_y[i] if i < len(center_y) else center_y[-1]
+            sub_label = f"Turbine #{i+1}"
+            print(f"    - {sub_label:<28} : Position=({x_pos}, {y_pos}) m")
+
+        key_aliases_turb = {
+            "r": "Radius (r)",
+            "height": "Height",
+            "twist": "Twist Angle",
+            "delta": "Cone/Inclin. Angle (delta)",
+            "chord": "Blade Chord",
+            "B": "Number of Blades (B)",
+            "solidity": "Solidity",
+            "Omega": "Rotational Speed (Omega)",
+            "ntheta": "Azimuthal Discretization",
+        }
+        for k, label in key_aliases_turb.items():
+            if k in turbine_cfg:
+                print(f"  • {label:<30} : {_format_value(turbine_cfg[k])}")
+        print()
+
+    # 2. Environment
+    env_cfg = config.get("environment", {})
+    if env_cfg:
+        print("  [ENVIRONMENT & FLOW FIELD]")
+        key_aliases_env = {
+            "Vinf": "Freestream Velocity (Vinf)",
+            "rho": "Air Density (rho)",
+            "mu": "Dynamic Viscosity (mu)",
+        }
+        for k, v in env_cfg.items():
+            label = key_aliases_env.get(k, k)
+            print(f"  • {label:<30} : {_format_value(v)}")
+        print()
+
+    # 3. Solver
+    solver_cfg = config.get("solver", {})
+    if solver_cfg:
+        print("  [SOLVER & INTERACTION]")
+        key_aliases_solver = {
+            "num_turbines": "Configured Turbines Count",
+            "method": "Polar Generator Method",
+            "fixed_parameter": "Fixed Parameter",
+            "neuralfoil": "NeuralFoil Settings",
+            "file": "Experimental File Source",
+            "simulation3d": "3D Simulation Setup",
+        }
+        for k, v in solver_cfg.items():
+            label = key_aliases_solver.get(k, k)
+            print(f"  • {label:<30} : {_format_value(v)}")
+        print()
+
+    # 4. Submodels
+    submodels_cfg = config.get("submodels", {})
+    if submodels_cfg:
+        print("  [SUBMODELS]")
+        key_aliases_sub = {
+            "tip_loss": "Tip Loss Correction",
+            "dynamic_stall": "Dynamic Stall Model",
+            "flow_curvature": "Flow Curvature Model",
+        }
+        for k, v in submodels_cfg.items():
+            label = key_aliases_sub.get(k, k)
+            print(f"  • {label:<30} : {_format_value(v)}")
+        print()
+
+    # 5. Output Settings
+    output_cfg = config.get("output", {})
+    if output_cfg:
+        print("  [OUTPUT SETTINGS]")
+        key_aliases_out = {
+            "save": "Save Data Output",
+            "save_config": "Save Config File",
+            "save_plot": "Save Plots",
+            "data_file": "Data Export Format",
+            "plot_image": "Plot Resolution/Format",
+        }
+        for k, v in output_cfg.items():
+            label = key_aliases_out.get(k, k)
+            print(f"  • {label:<30} : {_format_value(v)}")
+        print()
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the multi-turbine simulation module."""
+    parser = argparse.ArgumentParser(
+        description="PyVAWT - Multi-Turbine Aerodynamic Solver Module"
+    )
+    parser.add_argument(
+        "--show-config",
+        action="store_true",
+        help="Display resolved simulation configuration.",
+    )
+    return parser.parse_args()

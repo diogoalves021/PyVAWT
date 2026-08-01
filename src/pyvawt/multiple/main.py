@@ -1,5 +1,5 @@
 """
-Main Entrypoint Module for PyVAWT.
+Main Entrypoint Module for PyVAWT multi-turbine simulation.
 
 Provides the primary Command Line Interface (CLI) execution routine for running
 coupled Vertical Axis Wind Turbine (VAWT) aerodynamic simulations.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from src.pyvawt.multiple.orchestrator import run_simulation_case
-from src.pyvawt.multiple.settings import load_config
+from src.pyvawt.multiple.settings import load_config, display_multi_config, parse_args
 from src.pyvawt.ui.ui import MultiTurbineUI
 
 # Application-level logging configuration fallback
@@ -24,11 +24,10 @@ if not logger.hasHandlers():
 
 def main() -> None:
     """
-    Execute the primary PyVAWT simulation pipeline.
+    Execute the primary PyVAWT multi-turbine simulation pipeline.
 
-    Loads simulation configuration, extracts base physical parameters, initializes
-    the Terminal User Interface (UI), and triggers the orchestrator execution
-    routine for the configured simulation case.
+    Parses CLI arguments, loads configuration, displays setup if requested,
+    and dispatches execution to the simulation orchestrator.
 
     Raises
     ------
@@ -36,6 +35,8 @@ def main() -> None:
         Logs any unhandled critical exception raised during simulation setup,
         numerical calculation, or results exporting.
     """
+    args = parse_args()
+
     # 1. Initialize Terminal UI Header
     MultiTurbineUI.print_header()
 
@@ -43,7 +44,11 @@ def main() -> None:
         # 2. Load cached YAML configuration dictionary
         config = load_config()
 
-        # 3. Safely extract base physical and operational parameters
+        # 3. If --show-config flag is provided, display configuration and exit
+        if args.show_config:
+            display_multi_config(config)
+
+        # 4. Safely extract base physical and operational parameters
         raw_chord = config["turbine"]["chord"]
         raw_solidity = config["turbine"]["solidity"]
         raw_vinf = config["environment"]["Vinf"]
@@ -52,10 +57,10 @@ def main() -> None:
         solidity_val = float(raw_solidity[0] if isinstance(raw_solidity, list) else raw_solidity)
         vinf_val = float(raw_vinf[0] if isinstance(raw_vinf, list) else raw_vinf)
 
-        # 4. Pack case parameters tuple: (case_idx, total_cases, chord, solidity, vinf)
+        # 5. Pack case parameters tuple: (case_idx, total_cases, chord, solidity, vinf)
         case_params = (1, 1, chord_val, solidity_val, vinf_val)
 
-        # 5. Dispatch case run to orchestrator
+        # 6. Dispatch case run to orchestrator
         run_simulation_case(case_params)
 
     except Exception as err:

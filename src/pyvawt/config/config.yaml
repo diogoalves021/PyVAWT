@@ -30,7 +30,7 @@ solver:
   tsr:
     min: 1.0                     # Minimum Tip Speed Ratio (TSR)
     max: 7.0                     # Maximum Tip Speed Ratio (TSR)
-    n_points: 10                 # Number of TSR evaluation points
+    n_points: 20                 # Number of TSR evaluation points
 
   method: neuralfoil             # Aerodynamic polar provider: "neuralfoil" or "file"
   fixed_parameter: vinf          # Parameter kept constant during sweep: "omega" or "vinf"

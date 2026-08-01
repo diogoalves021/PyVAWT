@@ -22,7 +22,7 @@ from src.pyvawt.single.utils import (
 from src.pyvawt.ui.ui import (
     UI,
     format_time,
-    print_config,
+    print_simulation_config,
     print_simulation_footer,
     print_simulation_results,
     print_summary,
@@ -55,7 +55,7 @@ def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
     simulate_3D_turbine : Executes vertical discretization for 3D mode.
     """
     # 1. Header & Initialization
-    UI.banner("PYVAWT - AERODYNAMIC SIMULATOR")
+    UI.banner("PYVAWT - ONE-TURBINE SOLVER MODULE")
 
     UI.section("INITIALIZATION & PRE-PROCESSING")
     warmup_numba_kernels(verbose=True)
@@ -71,7 +71,7 @@ def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
 
     # Optional configuration printout
     if args.show_config:
-        print_config(config)
+        print_simulation_config(config)
 
     # =========================================================================
     # 2. CHECK 3D SIMULATION MODE

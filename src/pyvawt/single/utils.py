@@ -39,7 +39,7 @@ def warmup_numba_kernels(verbose: bool = True) -> None:
         If True, displays initialization status and compilation elapsed time.
     """
     if verbose:
-        UI.status("JIT Engine (Numba)", "Compiling C kernels...", level="info")
+        UI.status("Aerodynamic Kernels", "Compiling...", level="info")
 
     t0 = time.perf_counter()
     dummy_1d = np.zeros(10, dtype=np.float64)
@@ -75,10 +75,10 @@ def warmup_numba_kernels(verbose: bool = True) -> None:
         )
         if verbose:
             dt = time.perf_counter() - t0
-            UI.status("JIT Engine (Numba)", f"Ready ({dt:.2f}s)", level="ok")
+            UI.status("Aerodynamic Kernels", f"Ready ({dt:.2f}s)", level="ok")
     except Exception as e:
         if verbose:
-            UI.status("JIT Engine (Numba)", f"Failed: {e}", level="warn")
+            UI.status("Aerodynamic Kernels", f"Failed: {e}", level="warn")
 
 
 def _worker_init() -> None:
