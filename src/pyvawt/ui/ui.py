@@ -424,6 +424,55 @@ def print_simulation_config(config: dict[str, Any]) -> None:
 
         print()  # Spacer line between sections
 
+def _display_2d_header(airfoil_name: str, solidity: float, vinf: float) -> None:
+    """
+    Display standard terminal header for 2D simulation execution.
+
+    Parameters
+    ----------
+    airfoil_name : str
+        Name or identifier of the airfoil profile.
+    solidity : float
+        Rotor solidity [-].
+    vinf : float
+        Freestream wind velocity [m/s].
+    """
+    UI.section("2D SIMULATION EXECUTION")
+    UI.status("Airfoil Profile", str(airfoil_name))
+    UI.status("Rotor Solidity", f"{solidity:.3f}")
+    UI.status("Wind Speed (Vinf)", f"{vinf:.2f} m/s")
+    print()
+
+
+def _display_2d_results(
+    success: bool,
+    elapsed: float,
+    result_dir: Path | str | None,
+    error: str | None = None,
+) -> None:
+    """
+    Display standard terminal summary panel for 2D simulation results.
+
+    Parameters
+    ----------
+    success : bool
+        Execution status flag (True if successful, False if failed).
+    elapsed : float
+        Total execution duration in seconds.
+    result_dir : Path, str, or None
+        Path object or string pointing to the output execution directory.
+    error : str, optional
+        Cleaned summary message describing execution error if run failed.
+    """
+    UI.section("2D SIMULATION RESULTS")
+    if success:
+        UI.status("Status", "Completed Successfully", level="ok")
+    else:
+        UI.status("Status", f"Failed ({error})", level="error")
+    UI.status("Total Execution Time", UI.format_time(elapsed))
+    UI.status("Output Directory", str(result_dir) if result_dir else "N/A")
+    print()
+
 
 def print_summary(config: dict[str, Any]) -> None:
     """

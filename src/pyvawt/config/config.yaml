@@ -22,7 +22,6 @@ turbine:
 environment:
   Vinf:
     - 6.23                       # Free-stream velocity (m/s) - Varied in Sanvito's experiment
-
   rho: 1.225                     # Fluid density (kg/m3)
   mu: 1.7894e-05                 # Dynamic viscosity (Pa*s)
 
@@ -44,7 +43,7 @@ solver:
     path: src/data/experimental/NACA_0012_mod.dat   # Path to polar data file
 
   simulation3d:
-    enabled: true                # Enable 3D effects/domain simulation
+    enabled: false                # Enable 3D effects/domain simulation
 
     settings:                    # [Active only if enabled = true]
       vertical_layers: 90         # Number of vertical grid divisions for cylinder discretization

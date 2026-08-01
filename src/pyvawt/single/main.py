@@ -116,9 +116,16 @@ def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
     if total == 1:
         UI.status("Simulation Cases", "1 combination (Single-Core Direct Execution)")
         params = combinations[0]
-        result = run_simulation_case(params, config, flow_cfg, stall_angles)
+        
+        # Ativa UI detalhada e remove a barra "2D Sweep" redundante
+        result = run_simulation_case(
+            params, 
+            config, 
+            flow_cfg, 
+            stall_angles, 
+            show_details=True
+        )
         results.append(result)
-        UI.progress_bar(1, 1, time.perf_counter() - start_time, prefix="2D Sweep")
 
     # --- Multi-core parameter sweep (rate-limited progress updates) ---
     else:
@@ -135,7 +142,12 @@ def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
         ) as executor:
             futures = {
                 executor.submit(
-                    run_simulation_case, params, config, flow_cfg, stall_angles
+                    run_simulation_case, 
+                    params, 
+                    config, 
+                    flow_cfg, 
+                    stall_angles, 
+                    show_details=False  # Silencia UI individual para não poluir o sweep
                 ): params
                 for params in combinations
             }
@@ -162,7 +174,8 @@ def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
                         completed, total, now - start_time, prefix="2D Sweep"
                     )
                     last_update = now
-
+        
+        print()
     # =========================================================================
     # 4. EXPORT & SUMMARY
     # =========================================================================

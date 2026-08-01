@@ -6,6 +6,7 @@ import h5py
 import csv
 import time
 import traceback
+from pathlib import Path
 import copy
 from scipy.integrate import quad
 from scipy.optimize import root
@@ -22,17 +23,22 @@ from src.pyvawt.single.aerodynamics import (
     detect_stall_angles,
     get_tc_from_airfoil
 )
-from src.pyvawt.single.export import save_config
+from src.pyvawt.single.export import save_config, create_run_directory, export_3d_results
 from src.pyvawt.single.geometry import resolve_turbine_geometry
 from src.pyvawt.single.interpolation import interpolate_2d_lut, fast_trapz
 from src.pyvawt.single.utils import load_config
-from src.pyvawt.ui.ui import UI, format_time
+from src.pyvawt.ui.ui import UI, format_time, _display_2d_header, _display_2d_results
+
 
 # Global RAM cache dictionary for storing precomputed HDF5 influence matrices
 _MATRIX_H5_CACHE: dict[tuple[int, str], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 
 # Global cache dictionary for storing Aerodynamic Look-Up Tables (LUT) in RAM
 _AERO_LUT_CACHE: dict = {}
+
+# Default hardcoded root output directory
+BASE_RESULTS_DIR = Path("results")
+
 
 # ==============================================================================
 # Aerodynamic Influence Kernel Integrands
@@ -1235,18 +1241,27 @@ def initialize_turbine_and_environment(config):
 
     return turbine, env, simulation_params, turbine_params, environment_params, r, ntheta
 
-def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z=None, H=None):
+
+def run_simulation_case(
+    params: tuple[int, int, float, float, float],
+    base_config: dict[str, Any],
+    flow_cfg: dict[str, Any] | None = None,
+    stall_angles: list[tuple[float, float]] | dict[int, tuple[float, float]] | None = None,
+    z: float | None = None,
+    H: float | None = None,
+    output_dir: str | Path | None = None,
+    show_details: bool = True,  # Controls detailed UI output per case
+) -> dict[str, Any]:
     """
     Execute a single simulation case (2D mode or 3D blade section slice).
 
     Evaluates aerodynamic performance across a range of Tip Speed Ratios (TSR),
     computes performance curves (CP vs. TSR, CT vs. TSR), integrated force components,
-    and optional azimuthal power coefficient distributions (Cp(theta)). Handles
-    results serialization and plot generation.
+    and optional azimuthal power coefficient distributions (Cp(theta)).
 
     Parameters
     ----------
-    params : tuple
+    params : tuple of (int, int, float, float, float)
         Case configuration tuple containing:
         - `airfoil_index` (int): Index referencing the airfoil profile.
         - `turbine_index` (int): Index referencing the turbine configuration.
@@ -1257,143 +1272,155 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
         Base simulation configuration dictionary containing solver, turbine,
         environment, and output settings.
     flow_cfg : dict, optional
-        Configuration settings for the flow curvature submodel. If None, defaults
-        to extracting settings from `base_config`.
-    stall_angles : list of tuple of float, optional
-        List of tuples containing positive and negative static stall angles of attack 
-        `(aoa_stall_pos, aoa_stall_neg)` in radians for each airfoil.
+        Configuration settings for the flow curvature submodel. If None,
+        defaults to extracting settings from `base_config`.
+    stall_angles : list of tuple of float or dict, optional
+        Collection of static positive and negative stall angles of attack [rad].
     z : float, optional
-        Vertical spanwise coordinate [m] for 3D slice evaluations. When provided,
-        indicates 3D mode and bypasses 2D-only features (e.g., `cp_theta`).
+        Vertical spanwise coordinate [m] for 3D slice evaluations.
     H : float, optional
         Total blade height/span [m] for 3D slice evaluations.
+    output_dir : str or Path, optional
+        Explicit output directory override. If provided, bypasses default directory
+        creation logic.
 
     Returns
     -------
     dict
-        A dictionary containing simulation execution status and output metrics:
+        A dictionary containing execution status and numerical output metrics:
         - On success (`status='OK'`):
             - `name` (str): Output folder identifier string.
             - `status` (str): Execution status ('OK').
-            - `time_sec` (float): Total execution duration in seconds.
-            - `tsr` (np.ndarray): Array of evaluated Tip Speed Ratio values.
+            - `time_sec` (float): Execution duration in seconds.
+            - `tsr` (np.ndarray): Evaluated Tip Speed Ratio array.
             - `CP` (np.ndarray): Power coefficient array.
             - `CT` (np.ndarray): Thrust coefficient array.
             - `Tp` (np.ndarray): Tangential force array [N/m].
             - `Rp` (np.ndarray): Radial force array [N/m].
             - `Zp` (np.ndarray): Spanwise force array [N/m].
+            - `result_dir` (str or None): Output directory path string.
         - On failure (`status='ERROR'`):
             - `name` (str): Output folder identifier string.
             - `status` (str): Execution status ('ERROR').
-            - `error` (str): Cleaned error summary string.
+            - `error` (str): Cleaned error summary message.
             - `time_sec` (float): Execution duration prior to failure.
             - `traceback` (str): Truncated exception traceback string.
+            - `result_dir` (str or None): Output directory path string.
 
     Raises
     ------
     ValueError
         If `stall_angles` is None or if `fixed_parameter` in configuration is invalid.
     """
-    # Start stopwatch
     start_time = time.perf_counter()
 
     airfoil_index, turbine_index, chord, solidity, vinf = params
     config = copy.deepcopy(base_config)
 
-    # OUTPUT AND SAVING CONFIGURATIONS
-    output_cfg = config.get('output', {})
-    save_results = output_cfg.get('save', True)
-    save_config_used = output_cfg.get('save_config', True)
-    save_plot = output_cfg.get('save_plot', True)
+    # Flag pure 2D execution mode (z coordinate is None)
+    is_2d_mode = z is None
+    show_ui = is_2d_mode and show_details
 
-    data_cfg = output_cfg.get('data_file', {})
-    data_format = data_cfg.get('format', 'dat')
-    include_header = data_cfg.get('include_header', True)
+    # Output and persistence flags
+    output_cfg = config.get("output", {})
+    save_results = output_cfg.get("save", True)
+    save_config_used = output_cfg.get("save_config", True)
+    save_plot = output_cfg.get("save_plot", True)
 
-    plot_cfg = output_cfg.get('plot_image', {})
-    image_format = plot_cfg.get('format', 'png')
-    dpi = plot_cfg.get('dpi', 300)
+    data_cfg = output_cfg.get("data_file", {})
+    data_format = data_cfg.get("format", "dat")
+    include_header = data_cfg.get("include_header", True)
 
-    # SIMULATION MODE & CP(THETA) RULE VALIDATION
-    is_3d_mode = config.get('simulation3d', {}).get('enabled', False) or (z is not None)
-    cp_theta_cfg = output_cfg.get('cp_theta', {})
-    cp_theta_requested = cp_theta_cfg.get('enabled', False)
-    
+    plot_cfg = output_cfg.get("plot_image", {})
+    image_format = plot_cfg.get("format", "png")
+    dpi = plot_cfg.get("dpi", 300)
+
+    # Simulation mode and Cp(theta) extraction validation
+    is_3d_mode = config.get("simulation3d", {}).get("enabled", False) or (z is not None)
+    cp_theta_cfg = output_cfg.get("cp_theta", {})
+    cp_theta_requested = cp_theta_cfg.get("enabled", False)
+
     cp_theta_enabled = cp_theta_requested and not is_3d_mode
     if cp_theta_requested and is_3d_mode:
         print("--> [INFO] cp_theta extraction bypassed: Feature is only supported in 2D mode.", flush=True)
 
-    target_tsr = cp_theta_cfg.get('target_tsr', 2.58)
-    save_cp_theta_data = cp_theta_cfg.get('save_data', True)
-    save_cp_theta_plot = cp_theta_cfg.get('save_plot', True)
+    target_tsr = cp_theta_cfg.get("target_tsr", 2.58)
+    save_cp_theta_data = cp_theta_cfg.get("save_data", True)
+    save_cp_theta_plot = cp_theta_cfg.get("save_plot", True)
 
-    # TURBINE & ATMOSPHERIC PROPERTIES INITIALIZATION
-    airfoil_name = config['solver']['neuralfoil']['airfoil'][airfoil_index]
-    config['turbine']['chord'] = chord
-    config['turbine']['solidity'] = solidity
-    config['environment']['Vinf'] = vinf
+    # Turbine and atmospheric properties initialization
+    airfoil_name = config["solver"]["neuralfoil"]["airfoil"][airfoil_index]
+    config["turbine"]["chord"] = chord
+    config["turbine"]["solidity"] = solidity
+    config["environment"]["Vinf"] = vinf
+
+    # Display standard execution header if detailed UI is active
+    if show_ui:
+        _display_2d_header(airfoil_name, solidity, vinf)
 
     turbine, env, _, _, _, r, ntheta = initialize_turbine_and_environment(config)
-    angular_velocity = config['turbine']['Omega']
-    delta = config['turbine']['delta']
+    angular_velocity = config["turbine"]["Omega"]
+    delta = config["turbine"]["delta"]
 
-    # SUBMODEL SETUP (FLOW CURVATURE)
+    # Flow curvature submodel setup
     if flow_cfg is None:
-        flow_cfg = config.get('submodels', {}).get('flow_curvature', {})
+        flow_cfg = config.get("submodels", {}).get("flow_curvature", {})
 
-    if flow_cfg.get('enabled', False):
+    if flow_cfg.get("enabled", False):
         flow_manager = FlowCurvatureManager(
-            chord=chord, 
-            normalized_hook_point=flow_cfg.get('normalized_hook_point', 0.0),
-            enabled=True
+            chord=chord,
+            normalized_hook_point=flow_cfg.get("normalized_hook_point", 0.0),
+            enabled=True,
         )
     else:
         flow_manager = None
 
-    def fmt(val):
-        return str(val).replace('.', 'p')
+    def fmt(val: Any) -> str:
+        return str(val).replace(".", "p")
 
-    folder_name = (
-        f'{airfoil_name}_ch{fmt(chord)}_sol{fmt(solidity)}_vinf{fmt(vinf)}'
-        f'_delta{fmt(delta)}_r{fmt(r)}'
-    )
-    result_dir = os.path.join('src/results/temporary_results', folder_name)
-    config['output']['result_folder'] = folder_name
+    # Directory management logic
+    if output_dir is not None:
+        result_dir = Path(output_dir)
+        result_dir.mkdir(parents=True, exist_ok=True)
+    elif (save_results or save_config_used or save_plot) and (z is None):
+        result_dir = create_run_directory(config, base_dir=BASE_RESULTS_DIR)
+    else:
+        result_dir = None
 
-    if save_results or save_config_used or save_plot:
-        os.makedirs(result_dir, exist_ok=True)
+    folder_name = result_dir.name if result_dir else f"{airfoil_name}_ch{fmt(chord)}_sol{fmt(solidity)}"
+    config["output"]["result_folder"] = folder_name
 
-    if save_config_used:
-        from src.pyvawt.single.utils import save_config
-        save_config(config, os.path.join(result_dir, 'config_used.yaml'))
+    # Save active configuration snapshot if directory exists
+    if save_config_used and result_dir is not None:
+        save_config(config, result_dir / "config_used.yaml")
 
-    def _to_scalar(val):
+    def _to_scalar(val: Any) -> float:
         try:
             return val[0]
         except (TypeError, IndexError):
             return val
 
-    fixed_parameter = config['solver']['fixed_parameter']
-    ntheta = config['turbine']['ntheta']
-    aero_method = config.get('solver', {}).get('method', 'neuralfoil')
+    fixed_parameter = config["solver"]["fixed_parameter"]
+    ntheta = config["turbine"]["ntheta"]
+    aero_method = config.get("solver", {}).get("method", "neuralfoil")
 
-    if aero_method == 'neuralfoil':
+    if aero_method == "neuralfoil":
         turbine.aero = NeuralFoilAerodynamics(turbine_index=turbine_index, airfoil_index=airfoil_index, config=config)
 
     if stall_angles is None:
-        raise ValueError('Stall angles must be provided')
+        raise ValueError("Stall angles must be provided")
 
     aoaStallPos, aoaStallNeg = stall_angles[airfoil_index]
     turbine.aero.aoaStallPos = aoaStallPos
     turbine.aero.aoaStallNeg = aoaStallNeg
 
     try:
-        tsr_cfg = config.get('solver', {}).get('tsr', {})
-        tsr_min = float(tsr_cfg.get('min', 1.0))
-        tsr_max = float(tsr_cfg.get('max', 7.0))
-        n = int(tsr_cfg.get('n_points', 20))
+        tsr_cfg = config.get("solver", {}).get("tsr", {})
+        tsr_min = float(tsr_cfg.get("min", 1.0))
+        tsr_max = float(tsr_cfg.get("max", 7.0))
+        n = int(tsr_cfg.get("n_points", 20))
         tsrvec = np.linspace(tsr_min, tsr_max, n)
-        
+
         CPvec, CTvec = np.zeros(n), np.zeros(n)
         Rpvec, Tpvec, Zpvec = np.zeros(n), np.zeros(n), np.zeros(n)
 
@@ -1404,20 +1431,24 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
             target_idx = -1
             actual_target_tsr = None
 
-        cp_theta_file = os.path.join(result_dir, "cp_theta_distribution.dat")
-        should_write_cp_theta_file = save_results and cp_theta_enabled and save_cp_theta_data
+        should_write_cp_theta = (
+            save_results and cp_theta_enabled and save_cp_theta_data and (result_dir is not None)
+        )
+        cp_theta_file = (result_dir / "cp_theta_distribution.dat") if should_write_cp_theta else None
 
-        if should_write_cp_theta_file:
-            with open(cp_theta_file, "w") as f:
+        if should_write_cp_theta and cp_theta_file:
+            with open(cp_theta_file, "w", encoding="utf-8") as f:
                 f.write("TSR\ttheta_deg\tCp_theta\n")
 
         has_plot_data = False
         theta_plot, cp_plot = None, None
 
+        # Main aerodynamic solver loop across TSR range
+        start_tsr_loop = time.perf_counter()
         for i, tsr in enumerate(tsrvec):
-            if fixed_parameter == 'vinf':
+            if fixed_parameter == "vinf":
                 turbine.Omega = vinf * tsr / _to_scalar(r)
-            elif fixed_parameter == 'omega':
+            elif fixed_parameter == "omega":
                 turbine.Omega = _to_scalar(angular_velocity)
                 env.Vinf = turbine.Omega * _to_scalar(r) / tsr
             else:
@@ -1436,77 +1467,103 @@ def run_simulation_case(params, base_config, flow_cfg=None, stall_angles=None, z
                 Sref = 2 * _to_scalar(turbine.r) * Href
 
                 Cp_theta = (abs(turbine.Omega) * _to_scalar(turbine.r) * Tp_raw) / (
-                    0.5 * env.rho * _to_scalar(env.Vinf)**3 * Sref
+                    0.5 * env.rho * _to_scalar(env.Vinf) ** 3 * Sref
                 )
 
                 theta_plot = theta_deg.copy()
                 cp_plot = Cp_theta.copy()
                 has_plot_data = True
 
-                if should_write_cp_theta_file:
-                    Cp_theta_iterable = np.full_like(theta_deg, Cp_theta) if not hasattr(Cp_theta, "__iter__") else Cp_theta
-                    with open(cp_theta_file, "a") as f:
-                        for th, cp in zip(theta_deg, Cp_theta_iterable):
+                if should_write_cp_theta and cp_theta_file:
+                    Cp_theta_iter = np.full_like(theta_deg, Cp_theta) if not hasattr(Cp_theta, "__iter__") else Cp_theta
+                    with open(cp_theta_file, "a", encoding="utf-8") as f:
+                        for th, cp in zip(theta_deg, Cp_theta_iter):
                             f.write(f"{tsr:.6f}\t{th:.6f}\t{cp:.6f}\n")
 
-        data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
-        header = 'TSR\tCP\tCT\tRp\tTp\tZp'
-        if save_results:
-            filename = f'results_{airfoil_name}.{data_format}'
-            filepath = os.path.join(result_dir, filename)
+            # Display real-time progress bar if detailed UI is active
+            if show_ui:
+                UI.progress_bar(i + 1, n, time.perf_counter() - start_tsr_loop, prefix="2D Progress")
 
-            if data_format == 'dat':
-                np.savetxt(filepath, data_to_save, header=header if include_header else '', fmt='%.6f', delimiter='\t')
-            elif data_format == 'csv':
-                with open(filepath, 'w', newline='') as f:
+        # Clean line break after finishing progress bar
+        if show_ui:
+            print()
+
+        # Disk export triggers
+        data_to_save = np.column_stack((tsrvec, CPvec, CTvec, Rpvec, Tpvec, Zpvec))
+        header = "TSR\tCP\tCT\tRp\tTp\tZp"
+
+        if save_results and result_dir is not None:
+            filename = f"results_{airfoil_name}.{data_format}"
+            filepath = result_dir / filename
+
+            if data_format == "dat":
+                np.savetxt(filepath, data_to_save, header=header if include_header else "", fmt="%.6f", delimiter="\t")
+            elif data_format == "csv":
+                with open(filepath, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     if include_header:
-                        writer.writerow(header.split('\t'))
+                        writer.writerow(header.split("\t"))
                     writer.writerows(data_to_save.tolist())
 
-        if save_plot:
+        if save_plot and result_dir is not None:
             fig1 = plt.figure()
-            plt.plot(tsrvec, CPvec, 'o-')
-            plt.xlabel('TSR')
-            plt.ylabel('$C_p$')
+            plt.plot(tsrvec, CPvec, "o-")
+            plt.xlabel("TSR")
+            plt.ylabel("$C_p$")
             plt.grid(True)
             plt.tight_layout()
 
-            fig1_filename = f'cp_curve_{airfoil_name}.{image_format}'
-            fig1.savefig(os.path.join(result_dir, fig1_filename), format=image_format, dpi=dpi)
+            fig1_filename = f"cp_curve_{airfoil_name}.{image_format}"
+            fig1.savefig(result_dir / fig1_filename, format=image_format, dpi=dpi)
             plt.close(fig1)
 
-        if save_plot and cp_theta_enabled and save_cp_theta_plot and has_plot_data:
-            fig2 = plt.figure()
-            plt.plot(theta_plot, cp_plot, 'o-')
-            plt.xlabel('Azimuthal angle (deg)')
-            plt.ylabel('$C_p(\\theta)$')
-            plt.title(f'TSR = {actual_target_tsr:.2f}')
-            plt.grid(True)
-            plt.tight_layout()
+            if cp_theta_enabled and save_cp_theta_plot and has_plot_data:
+                fig2 = plt.figure()
+                plt.plot(theta_plot, cp_plot, "o-")
+                plt.xlabel("Azimuthal angle (deg)")
+                plt.ylabel("$C_p(\\theta)$")
+                plt.title(f"TSR = {actual_target_tsr:.2f}")
+                plt.grid(True)
+                plt.tight_layout()
 
-            fig2_filename = f'cp_theta_{airfoil_name}_tsr{fmt(round(actual_target_tsr, 2))}.{image_format}'
-            fig2.savefig(os.path.join(result_dir, fig2_filename), format=image_format, dpi=dpi)
-            plt.close(fig2)
+                fig2_filename = f"cp_theta_{airfoil_name}_tsr{fmt(round(actual_target_tsr, 2))}.{image_format}"
+                fig2.savefig(result_dir / fig2_filename, format=image_format, dpi=dpi)
+                plt.close(fig2)
 
         elapsed = time.perf_counter() - start_time
+
+        # Display results panel if detailed UI is active
+        if show_ui:
+            _display_2d_results(success=True, elapsed=elapsed, result_dir=result_dir)
+
         return {
-            'name': folder_name, 'status': 'OK', 'time_sec': round(elapsed, 2),
-            'tsr': tsrvec, 'CP': CPvec, 'CT': CTvec, 'Tp': Tpvec, 'Rp': Rpvec, 'Zp': Zpvec
+            "name": folder_name,
+            "status": "OK",
+            "time_sec": round(elapsed, 2),
+            "tsr": tsrvec,
+            "CP": CPvec,
+            "CT": CTvec,
+            "Tp": Tpvec,
+            "Rp": Rpvec,
+            "Zp": Zpvec,
+            "result_dir": str(result_dir) if result_dir else None,
         }
 
     except Exception as e:
-            elapsed = time.perf_counter() - start_time
-            # Clean up multi-line error messages into a single concise string
-            clean_error = str(e).strip().split('\n')[0]
+        elapsed = time.perf_counter() - start_time
+        clean_error = str(e).strip().split("\n")[0]
 
-            return {
-                'name': folder_name,
-                'status': 'ERROR',
-                'error': clean_error,
-                'time_sec': round(elapsed, 2),
-                'traceback': traceback.format_exc(limit=2),
-            }
+        if show_ui:
+            _display_2d_results(success=False, elapsed=elapsed, result_dir=result_dir, error=clean_error)
+
+        return {
+            "name": folder_name,
+            "status": "ERROR",
+            "error": clean_error,
+            "time_sec": round(elapsed, 2),
+            "traceback": traceback.format_exc(limit=2),
+            "result_dir": str(result_dir) if result_dir else None,
+        }
 
 def simulate_3D_turbine(
     base_config: dict[str, Any],
@@ -1526,7 +1583,7 @@ def simulate_3D_turbine(
         Base simulation configuration dictionary containing turbine parameters,
         environment properties, solver settings, and 3D discretization options.
     stall_angles : list of tuple of float or dict
-        Collection of positive and negative static stall angles of attack [rad]
+        Collection of static positive and negative stall angles of attack [rad]
         indexed by airfoil profile.
 
     Returns
@@ -1535,21 +1592,22 @@ def simulate_3D_turbine(
         Dictionary containing integrated 3D simulation results:
         - `tsr` (np.ndarray or None): Global Tip Speed Ratio vector.
         - `cp_3d` (np.ndarray or None): Global 3D power coefficient array.
-        - `result_dir` (str): Path to the 3D results output directory.
+        - `result_dir` (str): Path to the single 3D run output directory.
         - `elapsed_time` (float): Total execution duration in seconds.
         - `failed_slices` (list of tuple): List of `(slice_index, error_summary)`
           tuples for any slices that encountered solver errors.
-        If 3D mode is disabled in `base_config`, returns the single 2D dictionary
-        output from `run_simulation_case`.
     """
     start_time_3d = time.perf_counter()
     UI.section("3D SIMULATION EXECUTION")
 
-    # Extract 3D configurations
     sim3d_cfg = base_config.get("solver", {}).get("simulation3d", {})
     sim3d_settings = sim3d_cfg.get("settings", {})
+    output_cfg = base_config.get("output", {})
 
-    # Fallback to 2D standard mode if 3D is disabled
+    # Create a single run output directory for the entire 3D simulation session
+    run_dir = create_run_directory(base_config, base_dir=BASE_RESULTS_DIR)
+
+    # Fallback to standard 2D execution if 3D mode is disabled
     if not sim3d_cfg.get("enabled", False):
         UI.status(
             "Mode Notice",
@@ -1565,15 +1623,15 @@ def simulate_3D_turbine(
             params=(airfoil_index, turbine_index, chord, solidity, vinf),
             base_config=base_config,
             stall_angles=stall_angles,
+            output_dir=run_dir,
         )
 
-    # Disable file I/O inside individual slice loops for maximum speed
+    # Disable file I/O inside individual slice evaluations for maximum speed
     config_no_output = copy.deepcopy(base_config)
     config_no_output["output"]["save"] = False
     config_no_output["output"]["save_plot"] = False
     config_no_output["output"]["save_config"] = False
 
-    # Retrieve parameters
     height = float(base_config.get("turbine", {}).get("height", 20.0))
     n_slices = int(sim3d_settings.get("vertical_layers", 20))
     velocity_profile = sim3d_settings.get("velocity_profile", "power_law")
@@ -1583,25 +1641,18 @@ def simulate_3D_turbine(
     chord = base_config["turbine"]["chord"][0]
     solidity = base_config["turbine"]["solidity"][0]
 
-    # Setup 3D output directory
-    folder_name_3D = f"3D_H{height}_Ns{n_slices}"
-    result_dir_3D = os.path.join("src/results/results_3D", folder_name_3D)
-    os.makedirs(result_dir_3D, exist_ok=True)
-
-    # Display execution parameters
     UI.status("Turbine Height (H)", f"{height:.2f} m")
     UI.status("Vertical Layers (Slices)", f"{n_slices}")
     UI.status("Wind Profile", f"{velocity_profile.upper()}")
     print()
 
-    # Environmental and geometrical properties
     rho = base_config["environment"]["rho"]
     r = base_config["turbine"]["r"]
     Vr = base_config["environment"]["Vinf"][0]
     Zr = height / 2.0
     alpha = 0.13
 
-    # Power-law grid discretization
+    # Vertical grid discretization (Power-law distribution)
     beta = sim3d_settings.get("discretization_power", 2.0)
     eta = np.linspace(0, 1, n_slices + 1)
     z_nodes = height * (1.0 - (1.0 - eta) ** beta)
@@ -1613,7 +1664,7 @@ def simulate_3D_turbine(
     failed_slices = []
     start_slices_loop = time.perf_counter()
 
-    # Execute vertical slice loop
+    # Execute vertical slice loop (Runs entirely in memory)
     for i in range(n_slices):
         z = z_centers[i]
         dz = dz_array[i]
@@ -1621,6 +1672,7 @@ def simulate_3D_turbine(
         vinf = Vr * (z / Zr) ** alpha if velocity_profile == "power_law" else Vr
         z_centered = z - (height / 2.0)
 
+        # Providing z suppresses folder creation inside run_simulation_case
         result = run_simulation_case(
             params=(airfoil_index, turbine_index, chord, solidity, vinf),
             base_config=config_no_output,
@@ -1640,22 +1692,23 @@ def simulate_3D_turbine(
             else:
                 power_total += power_slice
         else:
-            # Format and collect error string concisely
             raw_err = result.get("error", "Unknown solver error")
             short_err = raw_err.replace("RuntimeError: ", "").strip()
             failed_slices.append((i + 1, short_err))
 
-        # Dynamic progress bar updates smoothly without getting broken by error prints
         elapsed_loop = time.perf_counter() - start_slices_loop
         UI.progress_bar(i + 1, n_slices, elapsed_loop, prefix="3D Progress")
 
-    # Compute global Cp
+    # Global 3D power coefficient integration
     total_time_3d = time.perf_counter() - start_time_3d
     A_total = 2.0 * r * height
     P_available = 0.5 * rho * (Vr**3) * A_total
     Cp_3D = (power_total / P_available) if power_total is not None else None
 
-    # Display summary card with error breakdown
+    # Export integrated 3D artifacts into the single run directory
+    if output_cfg.get("save", True) and Cp_3D is not None and tsrvec_global is not None:
+        export_3d_results(base_config, tsrvec_global, Cp_3D, run_dir)
+
     UI.section("3D SIMULATION RESULTS")
 
     if not failed_slices:
@@ -1664,15 +1717,12 @@ def simulate_3D_turbine(
         status_msg = f"Completed with Warnings ({len(failed_slices)}/{n_slices} Slices Failed)"
         UI.status("Status", status_msg, level="warn")
 
-    # High-precision execution time display
     UI.status("Total Execution Time", UI.format_time(total_time_3d))
-    UI.status("Output Directory", result_dir_3D)
+    UI.status("Output Directory", str(run_dir))
 
-    # Detailed breakdown for failed slices
     if failed_slices:
         print(f"\n  {UI.YELLOW}{UI.BOLD}Failed Slices Breakdown:{UI.RESET}")
         for slice_num, err in failed_slices:
-            # Truncate long error messages to 75 characters for alignment
             truncated_err = (err[:75] + "...") if len(err) > 75 else err
             print(f"    {UI.RED}• Slice {slice_num:02d}{UI.RESET} : {truncated_err}")
         print()
@@ -1680,8 +1730,7 @@ def simulate_3D_turbine(
     return {
         "tsr": tsrvec_global,
         "cp_3d": Cp_3D,
-        "result_dir": result_dir_3D,
+        "result_dir": str(run_dir),
         "elapsed_time": round(total_time_3d, 2),
         "failed_slices": failed_slices,
     }
-
