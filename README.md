@@ -12,7 +12,7 @@
 * **Physical Submodels:** Support for tip loss (*Tip Loss*), dynamic stall (*Dynamic Stall*), and flow curvature (*Flow Curvature*) corrections.
 * **Comprehensive Export Options:** Generation of data tables (`.dat`, `.csv`), performance curves ($C_P \times \text{TSR}$, $C_T \times \text{TSR}$), and azimuthal distributions ($C_P(\theta)$).
 
-> ⚠️ **Important Note on Parametric Analysis:** The automated parametric sweep functionality (providing array inputs for `chord`, `solidity`, `Vinf`, etc.) **is exclusively available for single-turbine simulations in 2D mode** (`simulation3d.enabled: false`). The 3D and Multiple Turbines modules operate strictly with scalar inputs per run.
+> **Important Note on Parametric Analysis:** The automated parametric sweep functionality (providing array inputs for `chord`, `solidity`, `Vinf`, etc.) **is exclusively available for single-turbine simulations in 2D mode** (`simulation3d.enabled: false`). The 3D and Multiple Turbines modules operate strictly with scalar inputs per run.
 
 ---
 
