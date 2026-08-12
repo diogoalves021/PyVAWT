@@ -1,158 +1,173 @@
-# PyVAWT
+# PyVAWT: Vertical Axis Wind Turbine Aerodynamic Simulator
 
-> **Development Status:** Active development is currently focused on the [`feat/one-turbine-optimization`](https://github.com/seu-usuario/pyvawt/tree/feat/one-turbine-optimization) branch, specializing in single turbine simulation optimization. The `master` branch is not under active development. `Master` will be developed in the near future.
-
-PyVAWT is a Python program for simulating Vertical Axis Wind Turbines (VAWTs) using the actuator cylinder method. This method models the aerodynamic behavior of VAWTs by representing the rotor as a series of cylinders interacting with the wind flow.
-
-## Description
-
-The goal of the project is to provide insights into the performance of wind turbines, making it ideal for researchers and engineers involved in the optimization and performance analysis of turbines.
-
-**Current status:**  
-The project is under active development. Basic features have already been implemented, including:
-
-1. Simulation of a single turbine
-2. Simulation of two turbines
-3. Flow curvature model implemented
-4. Simple wake model
-5. Reading simulation parameters from a `.yaml` file
-
-> **Note:** This project is still in its early stages of development. It is not recommended for critical engineering analysis, as accuracy and features are subject to significant changes.
-
-**Development perspective:**
-
-We want to focus on the following topics:
-
-1. Implement the Leishman-Beddoes dynamic stall model
-2. Implement a tip-loss model
-3. Develop a two-turbine simulation
+**PyVAWT** is a Python package developed for the aerodynamic simulation of Vertical Axis Wind Turbines (VAWTs) based on the **Actuator Cylinder** theory. The program incorporates high-fidelity aerodynamic loss models while maintaining low computational cost, allowing simulations to complete in just a few minutes on standard desktop computers.
 
 ---
 
-## Features
+## Key Features
 
-### 1. Aerodynamic Data Generation (`data_generation.py`)
+* **Fast Aerodynamic Modeling:** Actuator Cylinder solver integrated with **NeuralFoil** for rapid airfoil polar predictions via JIT compilation and neural networks.
+* **Flexible Modules:** Support for **single turbine** simulations (with 2D/3D options and advanced aerodynamic submodels) and **multiple coupled turbines** (2D aerodynamic interaction).
+* **Automated Parametric Sweep:** Automated execution of parameter combinations (chord, solidity, wind speed, and airfoil profiles).
+* **Physical Submodels:** Support for tip loss (*Tip Loss*), dynamic stall (*Dynamic Stall*), and flow curvature (*Flow Curvature*) corrections.
+* **Comprehensive Export Options:** Generation of data tables (`.dat`, `.csv`), performance curves ($C_P \times \text{TSR}$, $C_T \times \text{TSR}$), and azimuthal distributions ($C_P(\theta)$).
 
-Generates lift (Cl) and drag (Cd) curves using the `neuralfoil` module from the [AeroSandbox](https://aerosandbox.com/) library, based on the provided simulation conditions.
-
-- Choose any NACA airfoil
-- Define Reynolds and Mach numbers
-- Ability to simulate multiple airfoils automatically
-
-**✓ High precision**  
-**✗ High generation time (~25 secconds per airfoil)**
-
-Ideal for detailed and reliable aerodynamic performance analysis.
+> ⚠️ **Important Note on Parametric Analysis:** The automated parametric sweep functionality (providing array inputs for `chord`, `solidity`, `Vinf`, etc.) **is exclusively available for single-turbine simulations in 2D mode** (`simulation3d.enabled: false`). The 3D and Multiple Turbines modules operate strictly with scalar inputs per run.
 
 ---
 
-### 2. Reading Pre-Generated Data (`data_reading.py`)
+## Project Origin & Funding
 
-Imports files with Cl/Cd curves obtained from other tools (such as XFoil, QBlade, or AeroSandbox itself) and interpolates the data for use in the simulation.
+This software was developed as part of an academic research project focused on the aerodynamic modeling and optimization of vertical axis wind turbines.
 
-- Supports multiple input formats
-- Fast simulation (typically ~5 seconds)
-
-**✓ High simulation speed**  
-**✗ Lower precision (dependent on the quality of input data)**
-
-Ideal for quick testing, parametric studies, or optimizations.
+This work was supported by the **São Paulo Research Foundation (FAPESP)**.
 
 ---
 
-## Usage
+## Requirements & Installation
 
-Create a configuration file `config.yaml` inside the `config` folder with the simulation parameters:
+### Minimum Requirements
+* **Operating System:** Linux, macOS, or Windows.
+* **Python:** Version 3.13 or higher.
+* **Environment Manager:** `uv` (recommended for fast dependency management).
+
+### Installation Steps
+
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/your-username/pyvawt.git](https://github.com/your-username/pyvawt.git)
+   cd pyvawt
+   ```
+
+2. **Create the virtual environment and install dependencies via `uv`:**
+   ```bash
+   uv sync
+   ```
+
+---
+
+## Configuration Files (`YAML`)
+
+The program uses hierarchical configuration files to define simulation parameters.
+
+### 1. Single Turbine (`config.yaml`)
 
 ```yaml
 turbine:
-  radius_mode: auto #"manual" or "auto", calculate radius based on solidity formula.
-  r: 3.0
-  H: 1.0
-  twist: 0.0
-  delta: 0.0
-  chord:
-  - 0.25
-  - 0.125
-  B: 3
-  solidity:
-  - 0.125
-  - 0.1
-  centerX: 0
-  centerY: 0
-  Omega: 5.03
+  r: 1.0          # Rotor radius [m]
+  H: 2.0          # Rotor height [m]
+  twist: 0.0      # Twist angle [deg]
+  delta: 0.0      # Pitch angle [deg]
+  chord: 0.15     # Blade chord [m] (or array for 2D sweeps)
+  B: 2            # Number of blades
+  solidity: 0.3   # Solidity [-] (or array for 2D sweeps)
+  centerX: 0.0
+  centerY: 0.0
+  Omega: 15.0     # Angular velocity [rad/s]
   ntheta: 36
+
 environment:
-  Vinf:
-  - 5.03
-  - 6.23
-  rho: 1.225
-  mu: 1.7894e-05
-simulation:
-  fixed_parameter: omega # "omega" or "vinf"
-  num_turbines: 1
-  airfoil:
-  - naca0012
-  - naca4420
-  Re: 300000
-  Mach: 0.3
-  include_360_deg_effects: false
-  var_omega_vinf: 1
-aero:
-  method: neuralfoil  # "neuralfoil" or "file". It's the way the cl and cd is obtained.
-  model_size: large # "xxsmall"	"xsmall"	"small"	"medium"	"large"	"xlarge"	"xxlarge"	"xxxlarge"
-  file: src/data/experimental/NACA_0012_mod.dat  # only used if method = file
+  Vinf: 10.0      # Free-stream wind speed [m/s]
+  rho: 1.225      # Air density [kg/m³]
+  mu: 1.789e-5    # Dynamic viscosity [Pa·s]
+
+solver:
+  fixed_parameter: "vinf" # "vinf" or "omega"
+  tsr:
+    min: 1.0
+    max: 6.0
+    n_points: 20
+  method: "neuralfoil"
+  neuralfoil:
+    airfoil: ["NACA0012"]
+    model_size: "medium"
+  simulation3d:
+    enabled: false # Requires 'false' for parametric sweeps
+
+submodels:
+  tip_loss: true
+  dynamic_stall: false
+  flow_curvature:
+    enabled: true
+    normalized_hook_point: 0.5
+
 output:
   save: true
   save_config: true
   save_plot: true
   data_file:
-    format: dat # "dat" or "csv"
+    format: "dat" # "dat" or "csv"
     include_header: true
   plot_image:
-    format: png # "png" or "eps"
+    format: "png" # "png" or "eps"
     dpi: 300
-flow_curvature:
-  enabled: true          # "true" or "false"
-  normalized_hook_point: 0.0
-
 ```
-Note that parameters containing braces accept more than one number at a time. This means that when performing the calculations, as many simulations as necessary will be carried out in order to make the greatest number of possible combinations between the selected parameters automatically.
 
-> Therefore, if you don't want your simulation to take too long, avoid selecting several parameters within the braces at once. Only do this if you intend to.
+### 2. Multiple Turbines (`config_multiple.yaml`)
 
-After creating and selecting the parameters, you need to create a folder based on the following structure to store the results: `src/results/temporary_results`.
+For multiple turbine arrays, specify the number of rotors and their spatial coordinates in array format:
 
-The results generated by the simulations will be stored in this location so that they can be better organized later by the user.
+```yaml
+turbine:
+  centerX: [0.0, 3.0] # X positions of turbines [m]
+  centerY: [0.0, 0.0] # Y positions of turbines [m]
 
-Lastly, after setting up your environment and configuring the simulation parameters, you can run the code using the following command:
+solver:
+  num_turbines: 2
+```
 
+---
+
+## Running Simulations
+
+Simulations are executed from the root directory using `uv`:
+
+### Single Turbine Simulation
 ```bash
-uv run python3 -m src.pyvawt.main
+uv run python3 -m src.pyvawt.single.main
 ```
 
-### Terminal Output
-
-Before starting the simulation, PyVAWT prints a **simulation summary** in the terminal showing the most relevant parameters (turbine geometry, inflow conditions, and aerodynamic model). This allows the user to quickly verify that the configuration is correct before the calculations begin.
-
-If you want to display **all parameters contained in the YAML file**, you can run the solver with the following optional flag:
-
+To inspect all loaded configuration parameters prior to execution:
 ```bash
-uv run python3 -m src.pyvawt.main --show-config
+uv run python3 -m src.pyvawt.single.main --show-config
 ```
 
-This will print the complete configuration structure before the simulation starts. This option is useful for debugging configuration files or verifying complex parametric studies.
+### Multiple Turbines Simulation
+```bash
+uv run python3 -m src.pyvawt.multiple.main
+```
 
-This will start the simulation and the results will be displayed according to the parameters specified in the YAML configuration file. A folder will then be created with a unique name related to each parameter you specified, and this folder will contain the results. In each folder, there will be the following files:
+---
 
-1. YAML file with the simulation parameters.
-2. Image in .eps or .png format of the CP x TSR graph.
-3. A .dat or .csv file with all the data generated for each TSR value.
+## Output Structure (Results)
 
-## Dependecies
+Upon completion, a timestamped directory is created inside the results folder containing:
 
-The dependencies for this project are listed in the `pyproject.toml` file. To install the required dependencies, you can use [Poetry](https://python-poetry.org/) or [pip](https://pip.pypa.io/en/stable/).
+```text
+results/
+└── YYYYMMDD_HHMMSS_run/
+    ├── config_used.yaml          # Copy of the configuration file used
+    ├── results_NACA0012.dat      # Numerical results (TSR, Cp, Ct)
+    ├── cp_curve_NACA0012.png     # Cp vs TSR plot
+    └── cp_theta_NACA0012.png     # Azimuthal distribution Cp(theta) plot
+```
 
-## License
+---
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Repository Structure
+
+```text
+pyvawt/
+├── config/
+│   ├── config.yaml              # Default configuration (Single Turbine)
+│   └── config_multiple.yaml     # Default configuration (Multiple Turbines)
+├── pyproject.toml           # Project configuration & dependencies
+├── uv.lock                  # uv lockfile
+├── README.md                # Main documentation
+└── src/
+    └── pyvawt/
+        ├── single/          # Single turbine module (2D/3D/Parametric)
+        │   └── main.py
+        └── multiple/        # Multiple turbine array module (Only 2D)
+            └── main.py
+```
