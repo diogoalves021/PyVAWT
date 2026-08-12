@@ -3,17 +3,16 @@
 # ==============================================================================
 
 turbine:
-  r: 17.5                        # Rotor radius (m) - Verify if your solver expects radius or diameter
-  height: 24.3                    # Total height of the 3D domain (m)
+  r: 17.5                        # Rotor radius (m)
+  height: 24.3                   # Total height of the 3D domain (m)
   twist: 0.0                     # Blade twist angle (deg)
   delta: 0.0                     # Blade pitch/offset angle (deg)
   chord:
     - 1.75                       # Chord line length (m)
-
   B: 2                           # Number of blades
   solidity:
-    - 0.1                        # Solidity (calculated based on rotor dimensions)
-
+    - 0.1                        # Solidity (calculated based on rotor diameter in the code)
+    - 0.2
   centerX: 0.0                   # X-coordinate of the turbine center (m)
   centerY: 0.0                   # Y-coordinate of the turbine center (m)
   Omega: 1.427                   # Rotational speed (rad/s)
@@ -22,6 +21,7 @@ turbine:
 environment:
   Vinf:
     - 6.23                       # Free-stream velocity (m/s) - Varied in Sanvito's experiment
+    - 12.0 
   rho: 1.225                     # Fluid density (kg/m3)
   mu: 1.7894e-05                 # Dynamic viscosity (Pa*s)
 

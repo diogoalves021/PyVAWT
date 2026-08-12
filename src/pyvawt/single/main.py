@@ -8,6 +8,7 @@ from src.pyvawt.single.aerodynamics import detect_stall_angles
 from src.pyvawt.single.export import (
     export_2d_results,
     export_3d_results,
+    BASE_RESULTS_DIR
 )
 from src.pyvawt.single.simulation import (
     run_simulation_case,
@@ -112,51 +113,51 @@ def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
     results = []
     start_time = time.perf_counter()
 
-    # --- Single-case execution (bypasses ProcessPoolExecutor overhead) ---
+    PARALLEL_THRESHOLD = 33  # Limiar para evitar overhead do ProcessPoolExecutor em poucos casos
+
+    # --- Single-case execution ---
     if total == 1:
         UI.status("Simulation Cases", "1 combination (Single-Core Direct Execution)")
         params = combinations[0]
         
-        # Ativa UI detalhada e remove a barra "2D Sweep" redundante
         result = run_simulation_case(
             params, 
             config, 
             flow_cfg, 
             stall_angles, 
+            output_dir=None,  # Usa o padrão YYYYMMDD_HHMMSS_2D_solX.X
             show_details=True
         )
         results.append(result)
 
-    # --- Multi-core parameter sweep (rate-limited progress updates) ---
+    # --- Multi-case parametric sweep (Cria pasta pai + subpastas organizadas) ---
     else:
-        num_workers = min(total, os.cpu_count() or 1)
-        UI.status("Simulation Cases", f"{total} combinations")
-        UI.status("Active CPU Cores", f"{num_workers}")
-        print()
+        # Diretório raiz para a varredura paramétrica (100% idêntico ao original)
+        sweep_timestamp = time.strftime("%Y%m%d_%H%M%S")
+        sweep_base_dir = BASE_RESULTS_DIR / f"{sweep_timestamp}_2D_sweep"
 
-        completed = 0
-        last_update = 0.0  # Timestamp control for UI frame-rate limiting
+        # --- Execução Sequencial Rápida (Para 2 ou 3 casos: sem overhead de multiprocessing) ---
+        if total < PARALLEL_THRESHOLD:
+            UI.status("Simulation Cases", f"{total} combinations (Fast Sequential Execution)")
+            print()
 
-        with ProcessPoolExecutor(
-            max_workers=num_workers, initializer=_worker_init
-        ) as executor:
-            futures = {
-                executor.submit(
-                    run_simulation_case, 
-                    params, 
-                    config, 
-                    flow_cfg, 
-                    stall_angles, 
-                    show_details=False  # Silencia UI individual para não poluir o sweep
-                ): params
-                for params in combinations
-            }
+            for idx, params in enumerate(combinations):
+                ai, _, chord, sol, vinf = params
+                airfoil_name = config["solver"]["neuralfoil"]["airfoil"][ai]
+                
+                # Subpasta individual mantida exatamente igual
+                case_dir = sweep_base_dir / f"{airfoil_name}_c{chord:.2f}_sol{sol:.3f}_v{vinf:.2f}"
 
-            for future in as_completed(futures):
                 try:
-                    result = future.result()
+                    result = run_simulation_case(
+                        params, 
+                        config, 
+                        flow_cfg, 
+                        stall_angles, 
+                        output_dir=case_dir,  # Mesma estrutura de salvamento
+                        show_details=False
+                    )
                 except Exception as e:
-                    params = futures.get(future)
                     result = {
                         "name": str(params),
                         "status": "ERROR",
@@ -165,16 +166,64 @@ def run_simulation(config_path: str = "src/pyvawt/config/config.yaml") -> None:
                     }
 
                 results.append(result)
-                completed += 1
-
-                # Refresh progress bar at most every 0.05s (20 FPS) or on final completion
                 now = time.perf_counter()
-                if (now - last_update > 0.05) or (completed == total):
-                    UI.progress_bar(
-                        completed, total, now - start_time, prefix="2D Sweep"
+                UI.progress_bar(idx + 1, total, now - start_time, prefix="2D Sweep")
+
+        # --- Execução Paralela (Para 4 ou mais casos) ---
+        else:
+            num_workers = min(total, os.cpu_count() or 1)
+            UI.status("Simulation Cases", f"{total} combinations")
+            UI.status("Active CPU Cores", f"{num_workers}")
+            print()
+
+            completed = 0
+            last_update = 0.0
+
+            with ProcessPoolExecutor(
+                max_workers=num_workers, initializer=_worker_init
+            ) as executor:
+                futures = {}
+                
+                for params in combinations:
+                    ai, _, chord, sol, vinf = params
+                    airfoil_name = config["solver"]["neuralfoil"]["airfoil"][ai]
+                    
+                    # Subpasta individual para cada caso da varredura
+                    case_dir = sweep_base_dir / f"{airfoil_name}_c{chord:.2f}_sol{sol:.3f}_v{vinf:.2f}"
+
+                    future = executor.submit(
+                        run_simulation_case, 
+                        params, 
+                        config, 
+                        flow_cfg, 
+                        stall_angles, 
+                        output_dir=case_dir,  # Garante pasta própria para este caso
+                        show_details=False
                     )
-                    last_update = now
-        
+                    futures[future] = params
+
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                    except Exception as e:
+                        params = futures.get(future)
+                        result = {
+                            "name": str(params),
+                            "status": "ERROR",
+                            "time_sec": 0.0,
+                            "error": repr(e),
+                        }
+
+                    results.append(result)
+                    completed += 1
+
+                    now = time.perf_counter()
+                    if (now - last_update > 0.05) or (completed == total):
+                        UI.progress_bar(
+                            completed, total, now - start_time, prefix="2D Sweep"
+                        )
+                        last_update = now
+
         print()
     # =========================================================================
     # 4. EXPORT & SUMMARY

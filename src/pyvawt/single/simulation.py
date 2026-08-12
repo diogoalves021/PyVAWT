@@ -24,7 +24,7 @@ from src.pyvawt.single.aerodynamics import (
     get_tc_from_airfoil
 )
 from src.pyvawt.single.export import save_config, create_run_directory, export_3d_results
-from src.pyvawt.single.geometry import resolve_turbine_geometry
+from src.pyvawt.single.geometry import resolve_turbine_geometry, validate_and_update_rotor_geometry
 from src.pyvawt.single.interpolation import interpolate_2d_lut, fast_trapz
 from src.pyvawt.single.utils import load_config
 from src.pyvawt.ui.ui import UI, format_time, _display_2d_header, _display_2d_results
@@ -663,13 +663,7 @@ def _radialforce_kernel(
             cm[i] = c_m
 
     # 3. Geometric Rotor Parameters & Solidity Evaluation
-    sigma_r = B * chord / r
-    sigma_D = B * chord / (2.0 * r)
-    sigma = (
-        sigma_r
-        if abs(solidity - sigma_r) < abs(solidity - sigma_D)
-        else 2.0 * solidity
-    )
+    sigma = (B * chord) / r
 
     cos_delta = np.cos(delta)
     tan_delta = np.tan(delta)
@@ -1353,6 +1347,8 @@ def run_simulation_case(
     config["turbine"]["chord"] = chord
     config["turbine"]["solidity"] = solidity
     config["environment"]["Vinf"] = vinf
+
+    validate_and_update_rotor_geometry(config, chord, solidity)
 
     # Display standard execution header if detailed UI is active
     if show_ui:

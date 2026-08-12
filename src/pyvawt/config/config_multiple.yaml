@@ -3,26 +3,26 @@
 # ==============================================================================
 
 turbine:
-  r: 3.0                         # Rotor radius (m)
+  r: 35.0                         # Rotor radius (m)
   twist: 0.0                     # Blade twist angle (rad)
   delta: 0.0                     # Pre-set pitch angle (rad)
-  chord: 0.25                    # Blade chord length (m)
-  B: 3                           # Number of blades
-  solidity: 0.25                 # Rotor solidity
-  centerX: [0.0, 14.0, 28.0]     # X coordinates of the center of each turbine (m)
-  centerY: [6.0, 0.0, 6.0]       # Y coordinates of the center of each turbine (m)
-  Omega: 2.0                     # Initial angular velocity (rad/s)
+  chord: 1.75                    # Blade chord length (m)
+  B: 2                           # Number of blades
+  solidity: 0.1                 # Rotor solidity
+  centerX: [0.0, 140.0, 280.0]     # X coordinates of the center of each turbine (m)
+  centerY: [0.0, 0.0, 0.0]       # Y coordinates of the center of each turbine (m)
+  Omega: 1.427                     # Initial angular velocity (rad/s)
   ntheta: 36                     # Azimuthal discretization (number of steps)
 
 environment:
-  Vinf: 1.0                      # Free-stream wind velocity upstream (m/s)
+  Vinf: 6.23                      # Free-stream wind velocity upstream (m/s)
   rho: 1.225                     # Air density (kg/m³)
   mu: 1.7894e-5                  # Air dynamic viscosity (Pa.s)
 
 solver:
-  num_turbines: 2                # Number of coupled turbines in the simulation
+  num_turbines: 3                # Number of coupled turbines in the simulation
   method: neuralfoil             # "neuralfoil" or "file". It's the way the cl and cd is obtained.
-  fixed_parameter: omega         # "omega" or "vinf"
+  fixed_parameter: vinf         # "omega" or "vinf"
 
   neuralfoil:
     airfoil: naca0018            # Airfoil profile designated for the simulation

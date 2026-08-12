@@ -70,3 +70,43 @@ def resolve_turbine_geometry(
 
     return r, chord, solidity
 
+def validate_and_update_rotor_geometry(
+    config: dict[str, Any], chord: float, solidity: float
+) -> float:
+    """
+    Valida os parâmetros de entrada e calcula o raio do rotor mantendo
+    a consistência geométrica da turbina.
+
+    Parameters
+    ----------
+    config : dict
+        Dicionário de configuração da simulação.
+    chord : float
+        Corda da pá em metros [m].
+    solidity : float
+        Solidez do rotor [-].
+
+    Returns
+    -------
+    float
+        Raio calculado do rotor em metros [m].
+
+    Raises
+    ------
+    ValueError
+        Se a solidez for <= 0 ou se o raio calculado for menor ou igual à corda.
+    """
+    if solidity <= 0:
+        raise ValueError("A solidez (solidity) deve ser estritamente maior que zero.")
+
+    blades = int(config.get("turbine", {}).get("B", 2))
+    calculated_radius = round((chord * blades) / (2.0 * solidity), 4)
+
+    if calculated_radius <= chord:
+        raise ValueError(
+            f"Geometria fisicamente inválida: O raio calculado ({calculated_radius:.4f} m) "
+            f"deve ser maior do que a corda ({chord:.4f} m)."
+        )
+
+    config["turbine"]["r"] = calculated_radius
+    return calculated_radius
