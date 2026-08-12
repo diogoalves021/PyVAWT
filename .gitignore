@@ -40,3 +40,4 @@ Fluxogramas/
 .cache_lut/
 documentation/
 list/
+.cache*
