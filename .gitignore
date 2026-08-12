@@ -38,3 +38,5 @@ test/runtest_*
 *.zip
 Fluxogramas/
 .cache_lut/
+documentation/
+list/
